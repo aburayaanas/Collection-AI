@@ -25,7 +25,10 @@ def main():
         logger.info("Database connection pool initialized successfully")
         
         df = execute_query(get_query("willingness"))
-        df2 = 1
+
+        #testing ability query - Query Not Complete
+        df2 = execute_query(get_query("ability"))
+
         
     except Exception as e:
         # Use ErrorAdvisor to get actionable diagnostic
