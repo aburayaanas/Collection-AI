@@ -25,6 +25,7 @@ def main():
         logger.info("Database connection pool initialized successfully")
         
         df = execute_query(get_query("willingness"))
+        df2 = 1
         
     except Exception as e:
         # Use ErrorAdvisor to get actionable diagnostic
