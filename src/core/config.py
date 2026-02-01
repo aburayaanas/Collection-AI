@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     
     BATCH_SIZE: int = 1000 
     
+    # --- Execution Mode ---
+    MODE: str = Field(default="SCORE", description="Execution mode: TRAIN or SCORE")
+    
+    # --- Model Thresholds ---
     WILLINGNESS_THRESHOLD: float = 0.7
     ABILITY_THRESHOLD: float = 0.5
 

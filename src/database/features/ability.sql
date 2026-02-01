@@ -1,3 +1,110 @@
--- Query for Ability (Not Complete)
+WITH 
+-- 1. SALARY & INFLOW (Source: PIO_INWARD_CENTRAL_TRANSFERS)
+INCOME_STATS AS (
+    SELECT 
+        CUS_NUM,
+        -- Calculate Average Monthly Inflow (Last 6 Months)
+        ROUND(SUM(TRA_AMT) / 6, 2) AS AVG_MONTHLY_INCOME,
+        -- Calculate Income Volatility (Standard Deviation)
+        ROUND(STDDEV(TRA_AMT), 2) AS INCOME_VOLATILITY,
+        -- Last income date
+        MAX(TRA_DATE) AS LAST_INCOME_DATE
+    FROM PIO_INWARD_CENTRAL_TRANSFERS
+    WHERE TRA_DATE >= ADD_MONTHS(SYSDATE, -6)
+    GROUP BY CUS_NUM
+),
 
-select * from PIO_COLL.PIO_CUST_INFO
+-- 2. SPENDING BEHAVIOR & ENTROPY (Source: PIO_TRANSACTIONS)
+SPENDING_STATS AS (
+    SELECT 
+        CUS_NUM,
+        
+        -- 1. TOTAL OUTFLOW (Spending)
+        SUM(CASE WHEN DEB_CRE_IND = 1 THEN TRA_AMT ELSE 0 END) AS TOTAL_OUTFLOW_6M,
+        
+        -- 2. CASH VELOCITY (Avg Transaction Size)
+        ROUND(AVG(CASE WHEN DEB_CRE_IND = 1 THEN TRA_AMT END), 2) AS AVG_TX_SIZE,
+        
+        -- 3. SPENDING VOLATILITY (Stability)
+        ROUND(STDDEV(CASE WHEN DEB_CRE_IND = 1 THEN TRA_AMT END), 2) AS SPENDING_VOLATILITY,
+        
+        -- 4. ENTROPY PROXY (Variety)
+        COUNT(DISTINCT TRANS_DESC) AS UNIQUE_CATEGORIES_COUNT,
+
+        -- 5. RISK INDICATORS (Bounces/NSF)
+        SUM(CASE 
+            WHEN UPPER(TRANS_DESC) LIKE '%NSF%' 
+              OR UPPER(TRANS_DESC) LIKE '%RETURN%' 
+              OR UPPER(TRANS_DESC) LIKE '%DECLINE%' 
+            THEN 1 
+            ELSE 0 
+        END) AS NSF_COUNT_6M
+
+    FROM PIO_TRANSACTIONS
+    WHERE TRA_DATE >= ADD_MONTHS(SYSDATE, -6)
+    GROUP BY CUS_NUM
+),
+
+-- 3. DEBT & OBLIGATIONS (Source: PIO_LOANS)
+-- [CORRECTION: 'WITH' keyword removed here]
+LOAN_STATS AS (
+    SELECT 
+        CUS_NUM,
+        -- Debt Service Coverage
+        SUM(TOT_INST_AMT) AS TOTAL_MONTHLY_OBLIGATION,
+        -- Credit Utilization
+        ROUND(SUM(CRNT_BAL) / NULLIF(SUM(LOAN_AMT), 0), 4) AS LOAN_UTILIZATION_RATE
+    FROM PIO_LOANS
+    WHERE LOAN_STA = '1'
+    GROUP BY CUS_NUM
+),
+
+-- 4. LIQUIDITY (Source: PIO_ACCOUNTS)
+ACCOUNT_STATS AS (
+    SELECT 
+        CUS_NUM,
+        SUM(CRNT_BAL) AS CURRENT_TOTAL_BALANCE,
+        AVG(CRNT_BAL) AS AVG_BALANCE
+    FROM PIO_ACCOUNTS
+    WHERE STA_CODE = '1'
+    GROUP BY CUS_NUM
+)
+
+-- ==========================================================
+-- FINAL FEATURE ASSEMBLY
+-- ==========================================================
+SELECT 
+    -- Unified Customer ID
+    COALESCE(i.CUS_NUM, s.CUS_NUM, l.CUS_NUM, a.CUS_NUM) AS CUST_INFO_ID,
+    
+    -- Feature Group 1: Income & Liquidity
+    NVL(i.AVG_MONTHLY_INCOME, 0) AS AVG_MONTHLY_INCOME,
+    NVL(i.INCOME_VOLATILITY, 0) AS INCOME_VOLATILITY,
+    NVL(a.CURRENT_TOTAL_BALANCE, 0) AS CURRENT_BALANCE,
+    
+    -- Feature Group 2: Spending & Stability
+    NVL(s.TOTAL_OUTFLOW_6M, 0) AS TOTAL_OUTFLOW_6M,
+    NVL(s.SPENDING_VOLATILITY, 0) AS SPENDING_VOLATILITY,
+    NVL(s.UNIQUE_CATEGORIES_COUNT, 0) AS ENTROPY_CATEGORY_COUNT,
+    
+    -- Feature Group 3: Financial Stress
+    NVL(s.NSF_COUNT_6M, 0) AS NSF_COUNT,
+    NVL(l.TOTAL_MONTHLY_OBLIGATION, 0) AS FIXED_OBLIGATIONS,
+    NVL(l.LOAN_UTILIZATION_RATE, 0) AS UTILIZATION_RATE,
+    
+    -- Calculated Feature: Debt Burden Ratio (DBR)
+    ROUND(
+        NVL(l.TOTAL_MONTHLY_OBLIGATION, 0) / NULLIF(NVL(i.AVG_MONTHLY_INCOME, 0), 0), 
+        4
+    ) AS DBR_RATIO,
+    
+    -- Calculated Feature: Cash Runway
+    ROUND(
+        NVL(a.CURRENT_TOTAL_BALANCE, 0) / NULLIF(NVL(s.TOTAL_OUTFLOW_6M, 0) / 6, 0),
+        2
+    ) AS CASH_RUNWAY_MONTHS
+
+FROM INCOME_STATS i
+FULL OUTER JOIN SPENDING_STATS s ON i.CUS_NUM = s.CUS_NUM
+FULL OUTER JOIN LOAN_STATS l ON i.CUS_NUM = l.CUS_NUM
+FULL OUTER JOIN ACCOUNT_STATS a ON i.CUS_NUM = a.CUS_NUM
