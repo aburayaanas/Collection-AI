@@ -41,7 +41,8 @@ DB_PASSWORD=your_password
 DB_DSN=host:port/service_name
 
 # Execution Mode
-MODE=SCORE  # Change to TRAIN for model training
+MODE=SCORE  # TRAIN or SCORE
+MODEL_TYPE=WILLINGNESS  # WILLINGNESS or ABILITY
 
 # App Settings
 DEBUG=True
@@ -56,7 +57,14 @@ ABILITY_THRESHOLD=0.5
 
 ```bash
 # From project root
-python -m src.main
+# 1. Train Willingness Model
+MODEL_TYPE=WILLINGNESS MODE=TRAIN python -m src.main
+
+# 2. Train Ability Model
+MODEL_TYPE=ABILITY MODE=TRAIN python -m src.main
+
+# 3. View Results in MLflow
+mlflow ui
 ```
 
 ## Training Models
@@ -113,7 +121,11 @@ MODE=SCORE
 ### Step 2: Run Batch Scoring
 
 ```bash
-python -m src.main
+# Score Willingness
+MODEL_TYPE=WILLINGNESS MODE=SCORE python -m src.main
+
+# Score Ability
+MODEL_TYPE=ABILITY MODE=SCORE python -m src.main
 ```
 
 **What Happens:**
