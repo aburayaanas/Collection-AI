@@ -20,4 +20,16 @@ TABLE: PIO_INWARD_CENTRAL_TRANSFERS
 Questions:
 1. how to knwo is a cusotmer transactions is being declined due to insufficient funds or any other reason?
 (this will help me filling the SPENDING_STATS CTE in ability sql query).
-2. 
+2.
+
+
+
+###=================================================================================
+### ask abuhamzeh/ nadier.
+- account to use: most dpd account
+
+- PIO_CONTACT_MANUAL_INFO thier is no date column on when did we called him
+
+- payment methods collection: how to know if a customer has paid his loan without doing a promiss, is their a table that stores the payment methods of the customers? and value and if its full or not?
+
+- is using PIO_COLL.PIO_ACCOUNT_DEALS_INFO with the willingness query is correct joined with the PTP tables.

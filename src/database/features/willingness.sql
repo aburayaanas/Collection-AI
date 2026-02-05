@@ -9,12 +9,12 @@ WITH PTP AS (
 
         ROUND(
             SUM(CASE WHEN PTP_STATUS = '2' THEN 1 ELSE 0 END) 
-            / NULLIF(COUNT(*), 0),
+            / NULLIF(COUNT(*), 0), 
             4
         ) AS PTP_BROKEN_RATIO,
 
         ROUND(
-            SYSDATE - MAX(CASE WHEN PTP_STATUS = '2' THEN PTP_DATE END),
+            SYSDATE - MAX(CASE WHEN PTP_STATUS = '2' THEN PTP_DATE END), 
             0
         ) AS DAYS_SINCE_LAST_BROKEN_PTP
 
@@ -26,11 +26,8 @@ CONTACTS AS (
     SELECT
         CUST_INFO_ID,
 
-        -----------------------------------------------------------------
         -- FEATURE 2: Reachability (RPC Rate)
-        -----------------------------------------------------------------
         COUNT(*) AS TOTAL_ATTEMPTS_LIFETIME,
-
         SUM(CASE WHEN STATUS = 1 THEN 1 ELSE 0 END) AS SUCCESSFUL_CONTACTS,
 
         ROUND(
@@ -39,73 +36,61 @@ CONTACTS AS (
             4
         ) AS RPC_RATE,
 
-
-        -----------------------------------------------------------------
         -- FEATURE 3: “Ostrich Signal” (Recency)
-        -----------------------------------------------------------------
         ROUND(
             SYSDATE - MAX(CASE WHEN STATUS = 1 THEN UPDATED_DATE END),
             0
         ) AS DAYS_SINCE_LAST_RPC,
 
-
-        -----------------------------------------------------------------
-        -- FEATURE 4: Intensity (Harassment Check)
-        -----------------------------------------------------------------
-        SUM(
-            CASE 
-                WHEN UPDATED_DATE > SYSDATE - 30 THEN 1 
-                ELSE 0 
-            END
-        ) AS ATTEMPTS_LAST_30D,
-
-
-        -----------------------------------------------------------------
         -- FEATURE 5: Channel Preference
-        -----------------------------------------------------------------
-        SUM(
-            CASE 
-                WHEN CONTACT_TYPE = 1 AND STATUS = 1 THEN 1 
-                ELSE 0 
-            END
-        ) AS SMS_DELIVERED_COUNT,
-
-        SUM(
-            CASE 
-                WHEN CONTACT_TYPE = 2 AND STATUS = 1 THEN 1 
-                ELSE 0 
-            END
-        ) AS CALL_ANSWERED_COUNT
+        SUM(CASE WHEN CONTACT_TYPE = 1 AND STATUS = 1 THEN 1 ELSE 0 END) AS SMS_DELIVERED_COUNT,
+        SUM(CASE WHEN CONTACT_TYPE = 2 AND STATUS = 1 THEN 1 ELSE 0 END) AS CALL_ANSWERED_COUNT
 
     FROM PIO_COLL.PIO_CONTACT_MANUAL_INFO
     GROUP BY CUST_INFO_ID
+),
+
+-- [NEW] FEATURE 6: Payment & Deal Context
+DEAL_STATS AS (
+    SELECT
+        CUST_INFO_ID,
+        -- We SUM in case a customer has multiple accounts/deals
+        SUM(TOT_PAID_AMOUNT) AS TOTAL_PAYMENT_AMT,
+        SUM(TOT_OVERDUE_AMT) AS TOTAL_OVERDUE_AMT
+    FROM PIO_COLL.PIO_ACCOUNT_DEALS_INFO
+    GROUP BY CUST_INFO_ID
 )
 
+-- ==========================================================
+-- FINAL SELECT
+-- ==========================================================
 SELECT
-    COALESCE(PTP.CUST_INFO_ID, CONTACTS.CUST_INFO_ID) AS CUST_INFO_ID,
+    -- Master ID: Check PTP, then Contacts, then Deals
+    COALESCE(PTP.CUST_INFO_ID, CONTACTS.CUST_INFO_ID, D.CUST_INFO_ID) AS CUST_INFO_ID,
 
-    -----------------------------------------------------------------
-    -- FEATURE 1
-    -----------------------------------------------------------------
-    PTP.TOTAL_PTP_COUNT,
-    PTP.PTP_BROKEN_COUNT,
-    PTP.PTP_KEPT_COUNT,
-    PTP.PTP_BROKEN_RATIO,
-    PTP.DAYS_SINCE_LAST_BROKEN_PTP,
+    -- PTP Features
+    NVL(PTP.TOTAL_PTP_COUNT, 0) AS TOTAL_PTP_COUNT,
+    NVL(PTP.PTP_BROKEN_COUNT, 0) AS PTP_BROKEN_COUNT,
+    NVL(PTP.PTP_KEPT_COUNT, 0) AS PTP_KEPT_COUNT,
+    NVL(PTP.PTP_BROKEN_RATIO, 0) AS PTP_BROKEN_RATIO,
+    PTP.DAYS_SINCE_LAST_BROKEN_PTP, -- Keep NULL if never broken
 
-    -----------------------------------------------------------------
-    -- FEATURE 2 → 5
-    -----------------------------------------------------------------
-    CONTACTS.TOTAL_ATTEMPTS_LIFETIME,
-    CONTACTS.SUCCESSFUL_CONTACTS,
-    CONTACTS.RPC_RATE,
-    CONTACTS.DAYS_SINCE_LAST_RPC,
-    CONTACTS.ATTEMPTS_LAST_30D,
-    CONTACTS.SMS_DELIVERED_COUNT,
-    CONTACTS.CALL_ANSWERED_COUNT
+    -- Contact Features
+    NVL(CONTACTS.TOTAL_ATTEMPTS_LIFETIME, 0) AS TOTAL_ATTEMPTS_LIFETIME,
+    NVL(CONTACTS.SUCCESSFUL_CONTACTS, 0) AS SUCCESSFUL_CONTACTS,
+    NVL(CONTACTS.RPC_RATE, 0) AS RPC_RATE,
+    CONTACTS.DAYS_SINCE_LAST_RPC, -- Keep NULL if never contacted
+    NVL(CONTACTS.SMS_DELIVERED_COUNT, 0) AS SMS_DELIVERED_COUNT,
+    NVL(CONTACTS.CALL_ANSWERED_COUNT, 0) AS CALL_ANSWERED_COUNT,
+    
+    -- [NEW] Deal & Payment Features (Target Generation)
+    NVL(D.TOTAL_PAYMENT_AMT, 0) AS TOTAL_PAYMENT_AMT,
+    NVL(D.TOTAL_OVERDUE_AMT, 0) AS TOTAL_OVERDUE_AMT
 
 FROM PTP
-FULL OUTER JOIN CONTACTS
+FULL OUTER JOIN CONTACTS 
     ON PTP.CUST_INFO_ID = CONTACTS.CUST_INFO_ID
+FULL OUTER JOIN DEAL_STATS D 
+    ON COALESCE(PTP.CUST_INFO_ID, CONTACTS.CUST_INFO_ID) = D.CUST_INFO_ID
 
 ORDER BY 1

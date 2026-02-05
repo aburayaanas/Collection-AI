@@ -6,7 +6,6 @@ from src.database.connection import db
 from src.core.logger import setup_logging, get_logger
 from src.core.taxonomy import ErrorAdvisor
 from src.core.config import settings
-from src.database.queries import execute_query, get_query
 
 
 def main():
@@ -40,56 +39,83 @@ def main():
 
 
 def run_training_mode(logger):
-    """Execute model training pipeline."""
-    import polars as pl
-    from src.models.willingness.trainer import WillingnessTrainer
+    """Execute model training pipeline for willingness or ability model."""
+    from src.database.repository import CollectionRepository
     
     logger.info("=== TRAINING MODE ===")
-    logger.info("Fetching training data from database...")
+    logger.info(f"Model Type: {settings.MODEL_TYPE}")
     
-    # Fetch raw data from database
-    raw_data = execute_query(get_query("willingness"))
-    logger.info(f"Retrieved {len(raw_data):,} records from database")
+    # Initialize repository
+    repository = CollectionRepository()
     
-    # Convert to Polars DataFrame
-    # Assuming raw_data is a list of tuples/rows from cursor.fetchall()
-    df = pl.DataFrame(raw_data)
-    logger.info(f"Converted to Polars DataFrame: {df.shape[0]:,} rows x {df.shape[1]} columns")
-    
-    # Train model
-    logger.info("Initializing trainer...")
-    trainer = WillingnessTrainer(model_dir="models")
-    trainer.train(df)
+    # Route based on MODEL_TYPE
+    if settings.MODEL_TYPE.upper() == "WILLINGNESS":
+        from src.models.willingness.trainer import WillingnessTrainer
+        
+        # Fetch willingness training data
+        df = repository.get_willingness_training_data()
+        
+        # Train willingness model
+        logger.info("Initializing Willingness trainer...")
+        trainer = WillingnessTrainer(model_dir="models")
+        trainer.train(df)
+        
+    elif settings.MODEL_TYPE.upper() == "ABILITY":
+        from src.models.ability.trainer import AbilityTrainer
+        
+        # Fetch ability training data
+        df = repository.get_ability_training_data()
+        
+        # Train ability model
+        logger.info("Initializing Ability trainer...")
+        trainer = AbilityTrainer(model_dir="models")
+        trainer.train(df)
+        
+    else:
+        raise ValueError(f"Invalid MODEL_TYPE: {settings.MODEL_TYPE}. Must be 'WILLINGNESS' or 'ABILITY'")
     
     logger.info("Training completed successfully!")
 
 
 def run_scoring_mode(logger):
-    """Execute batch scoring pipeline."""
-    import polars as pl
-    from src.models.willingness.scorer import WillingnessScorer
+    """Execute batch scoring pipeline for willingness or ability model."""
+    from src.database.repository import CollectionRepository
     
     logger.info("=== SCORING MODE ===")
-    logger.info("Fetching data for scoring...")
+    logger.info(f"Model Type: {settings.MODEL_TYPE}")
     
-    # Fetch data to score
-    raw_data = execute_query(get_query("willingness"))
-    logger.info(f"Retrieved {len(raw_data):,} records for scoring")
+    # Initialize repository
+    repository = CollectionRepository()
     
-    # Convert to Polars DataFrame
-    df = pl.DataFrame(raw_data)
-    logger.info(f"Converted to Polars DataFrame: {df.shape[0]:,} rows x {df.shape[1]} columns")
-    
-    # Initialize scorer
-    logger.info("Loading trained model...")
-    scorer = WillingnessScorer(model_dir="models", cache_dir="data/cache")
-    
-    # Generate predictions and cache to Parquet
-    cache_path = scorer.score(df)
-    logger.info(f"Predictions cached to: {cache_path}")
-    
-    # Print SQL skeleton for reference
-    scorer.generate_sql_skeleton()
+    # Route based on MODEL_TYPE
+    if settings.MODEL_TYPE.upper() == "WILLINGNESS":
+        from src.models.willingness.scorer import WillingnessScorer
+        
+        # Fetch data
+        df = repository.get_willingness_training_data()
+        
+        # Score with willingness model
+        logger.info("Loading Willingness model...")
+        scorer = WillingnessScorer(model_dir="models", cache_dir="data/cache")
+        cache_path = scorer.score(df)
+        logger.info(f"Predictions cached to: {cache_path}")
+        scorer.generate_sql_skeleton()
+        
+    elif settings.MODEL_TYPE.upper() == "ABILITY":
+        from src.models.ability.scorer import AbilityScorer
+        
+        # Fetch data
+        df = repository.get_ability_training_data()
+        
+        # Score with ability model
+        logger.info("Loading Ability model...")
+        scorer = AbilityScorer(model_dir="models", cache_dir="data/cache")
+        cache_path = scorer.score(df)
+        logger.info(f"Predictions cached to: {cache_path}")
+        scorer.generate_sql_skeleton()
+        
+    else:
+        raise ValueError(f"Invalid MODEL_TYPE: {settings.MODEL_TYPE}. Must be 'WILLINGNESS' or 'ABILITY'")
     
     logger.info("Scoring completed successfully!")
     logger.info("Next step: Load Parquet file into database staging table and execute MERGE")

@@ -1,5 +1,34 @@
-.venv/
-.env
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
 
-logs/
+# Environment variables & Secrets
+.env
+.env.*
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# IDE
 .vscode/
+.idea/
+
+# Project Specific - Logs & Temp
+logs/
+temp/
+*.log
+
+# ML & Data Artifacts
+models/
+mlruns/
+mlflow.db
+data/
+*.parquet
+
+# Build
+dist/
+build/
+*.spec

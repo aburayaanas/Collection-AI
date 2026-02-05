@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     
     # --- Execution Mode ---
     MODE: str = Field(default="SCORE", description="Execution mode: TRAIN or SCORE")
+    MODEL_TYPE: str = Field(default="WILLINGNESS", description="Model type: WILLINGNESS or ABILITY")
     
     # --- Model Thresholds ---
     WILLINGNESS_THRESHOLD: float = 0.7
