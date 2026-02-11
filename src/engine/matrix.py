@@ -138,14 +138,14 @@ class MatrixEngine:
         df_quadrants = df.with_columns(
             pl.when(
                 (pl.col("WILLINGNESS_SCORE") > 0.5) & (pl.col("ABILITY_SCORE") > 0.5)
-            ).then(pl.lit("Q1"))
+            ).then(1)  # Q1
             .when(
                 (pl.col("WILLINGNESS_SCORE") > 0.5) & (pl.col("ABILITY_SCORE") <= 0.5)
-            ).then(pl.lit("Q2"))
+            ).then(2)  # Q2
             .when(
                 (pl.col("WILLINGNESS_SCORE") <= 0.5) & (pl.col("ABILITY_SCORE") > 0.5)
-            ).then(pl.lit("Q3"))
-            .otherwise(pl.lit("Q4"))
+            ).then(3)  # Q3
+            .otherwise(4)  # Q4
             .alias("CURRENT_QUADRANT")
         )
         

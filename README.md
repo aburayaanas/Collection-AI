@@ -1,328 +1,141 @@
 # Collection AI - Banking Collection Batch Job
 
-Production-ready ML system for predicting customer willingness and ability to pay in banking collection environments.
+Production-ready ML system for predicting customer **Willingness** and **Ability** to pay in banking collection environments.
 
 ## Overview
 
-Collection AI is a batch processing system that uses XGBoost models to score customers on two key dimensions:
-- **Willingness to Pay** - Likelihood of keeping payment promises
-- **Ability to Pay** - Financial capacity to make payments
+Collection AI is a batch processing system that combines two XGBoost models to prioritize collections strategy:
+1.  **Willingness to Pay** - Likelihood of keeping payment promises/self-curing.
+2.  **Ability to Pay** - Financial capacity/liquidity to make payments.
 
-The system supports two modes:
-- **TRAIN** - Build and optimize ML models with hyperparameter tuning
-- **SCORE** - Apply trained models to generate predictions for collections teams
+High-level output is a **Matrix Quadrant** (1-4) and a **Priority Score** stored in the database.
+
+---
 
 ## Quick Start
 
 ### 1. Setup Environment
-
 ```bash
-# Create virtual environment
+# Create and activate virtual environment
 python -m venv .venv
-
-# Activate virtual environment
-# Windows
-.venv\Scripts\activate
-# Linux/Mac
-source .venv/bin/activate
+source .venv/bin/activate  # Linux/Mac
+# .venv\Scripts\activate   # Windows
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Configure Database & Settings
-
-Edit `.env` file:
-
+### 2. Configuration (`.env`)
 ```bash
 # Database Credentials
 DB_USER=your_username
 DB_PASSWORD=your_password
 DB_DSN=host:port/service_name
 
-# Execution Mode
-MODE=SCORE  # TRAIN or SCORE
-MODEL_TYPE=WILLINGNESS  # WILLINGNESS or ABILITY
-
 # App Settings
+MODE=FULL             # TRAIN, SCORE, or FULL (Recommended)
+MODEL_TYPE=WILLINGNESS # Not used in FULL mode
 DEBUG=True
-BATCH_SIZE=1000
-
-# Model Thresholds
-WILLINGNESS_THRESHOLD=0.65
-ABILITY_THRESHOLD=0.5
 ```
 
-### 3. Run the Job
-
+### 3. Run the Pipeline
 ```bash
-# From project root
-# 1. Train Willingness Model
-MODEL_TYPE=WILLINGNESS MODE=TRAIN python -m src.main
-
-# 2. Train Ability Model
-MODEL_TYPE=ABILITY MODE=TRAIN python -m src.main
-
-# 3. View Results in MLflow
-mlflow ui
-```
-
-## Training Models
-
-### Step 1: Set Training Mode
-
-Update `.env`:
-```bash
-MODE=TRAIN
-```
-
-### Step 2: Run Training
-
-```bash
+# Run the complete Training -> Scoring -> Matrix pipeline
 python -m src.main
 ```
 
-The training pipeline will:
-1. Fetch raw data from database
-2. Engineer target variable (`IS_WILLING`)
-3. Optimize hyperparameters with Optuna (30 trials, 3-fold CV)
-4. Train final XGBoost model
-5. Log everything to MLflow
-6. Save versioned model to `models/`
+---
 
-### Step 3: View Experiment Results
+## System Architecture
 
-```bash
-mlflow ui
-```
+### 1. Data Marts (Oracle)
 
-Open browser to `http://localhost:5000` to view:
-- All training runs and metrics (AUC, Precision, Recall)
-- Hyperparameter comparisons
-- Model artifacts
+| Table | Purpose | Key Features | Target Variable |
+|-------|---------|--------------|-----------------|
+| `PIO_COLL_AI_WILLINGNESS_MART` | Willingness Model Data | RPC Recency, PTP Reliability, Payment Velocity | `TARGET_WILLINGNESS` |
+| `PIO_COLL_AI_ABILITY_MART` | Ability Model Data | Cash Runway, Spending Volatility, NSF Rate | `TARGET_ABILITY` |
 
-### Training Output
+### 2. Execution Pipeline (`src.main`)
 
-```
-models/
-├── willingness_v20260131_170523.json  # Versioned model
-└── latest_willingness.json            # Pointer to latest {"latest": "willingness_v..."}
-```
+When running in `MODE=FULL`, the system executes:
 
-## Scoring (Inference)
+1.  **Train Willingness Model**
+    *   Fetches data from `PIO_COLL_AI_WILLINGNESS_MART`.
+    *   Trains XGBoost Classifier (binary:logistic).
+    *   Excludes `TARGET_WILLINGNESS` (Label) and `SNAPSHOT_DATE` from features.
+    *   Saves artifact: `models/willingness_v{timestamp}.json`.
 
-### Step 1: Set Scoring Mode
+2.  **Train Ability Model**
+    *   Fetches data from `PIO_COLL_AI_ABILITY_MART`.
+    *   Trains XGBoost Classifier.
+    *   Excludes `TARGET_ABILITY` (Label) and `SNAPSHOT_DATE` from features.
+    *   Saves artifact: `models/ability_v{timestamp}.json`.
 
-Update `.env`:
-```bash
-MODE=SCORE
-```
+3.  **Score Willingness**
+    *   Loads latest Willingness model.
+    *   Generates `WILLINGNESS_SCORE` (0-1).
+    *   Caches to `data/cache/willingness_scores_{date}.parquet`.
 
-### Step 2: Run Batch Scoring
+4.  **Score Ability**
+    *   Loads latest Ability model.
+    *   Generates `ABILITY_SCORE` (0-1).
+    *   Caches to `data/cache/ability_scores_{date}.parquet`.
 
-```bash
-# Score Willingness
-MODEL_TYPE=WILLINGNESS MODE=SCORE python -m src.main
+5.  **Matrix Integration**
+    *   Joins Parquet caches on `CUST_INFO_ID`.
+    *   Calculates `PRIORITY_SCORE` (0.6 * Willingness + 0.4 * Ability).
+    *   Assigns **Quadrants (1-4)**.
+    *   **Persists** results to `PIO_COLL_AI_MATRIX_RESULTS` table via MERGE.
 
-# Score Ability
-MODEL_TYPE=ABILITY MODE=SCORE python -m src.main
-```
+### 3. Quadrant Logic & Strategy:
 
-**What Happens:**
-1. Loads data from database
-2. Loads latest trained model using pointer file
-3. Generates predictions (XGBoost)
-4. Caches results to `data/cache/willingness_scores_{YYYYMMDD}.parquet`
-5. Prints SQL skeleton for database merge
+| Quadrant | Name | Logic | Profile Description | Standard Collection Action |
+|----------|------|-------|---------------------|----------------------------|
+| **1** | **Ideal (Self-Cure)** | Willingness > 0.5 <br> Ability > 0.5 | **"I want to pay, and I have the money."** <br> These customers are highly engaged and financially stable. They likely just forgot or had a temporary bank glitch. | **Light Touch**: Send an automated SMS or Email reminder with a payment link. Do not waste expensive human call center agents on them. |
+| **2** | **Vulnerable (Hardship)** | Willingness > 0.5 <br> Ability ≤ 0.5 | **"I want to pay, but I am broke."** <br> These customers answer the phone and make promises, but their bank accounts are empty (high NSF, low cash runway). | **Restructure/Empathy**: Do not demand the full balance; they physically cannot pay it. Offer a 12-month payment plan, debt restructuring, or a hardship program. |
+| **3** | **Resistant (Strategic)** | Willingness ≤ 0.5 <br> Ability > 0.5 | **"I have the money, but I refuse to pay you."** <br> These are "Ghost" or "Liar" profiles. They ignore calls or break promises, but your data shows their salary is hitting their account perfectly. | **Firm Escalation**: Assign to your most experienced, firmest human collectors. Use formal legal threats, credit bureau reporting warnings, or immediate escalation. |
+| **4** | **High Risk (Lost Cause)** | Willingness ≤ 0.5 <br> Ability ≤ 0.5 | **"I have no money, and I'm hiding."** <br> They are entirely unresponsive and financially distressed. | **Skip / Sell**: Do not waste effort. Send to a third-party collection agency, initiate deep legal action (garnishment), or write off the debt. |
 
-### Scoring Output
+### 4. Output Table (`PIO_COLL_AI_MATRIX_RESULTS`)
 
-```
-data/cache/
-└── willingness_scores_20260131.parquet  # ID + WILLINGNESS_SCORE only
-```
+| Column | Type | Description |
+|--------|------|-------------|
+| `WILLINGNESS_SCORE` | NUMBER | Model probability of willingness. |
+| `ABILITY_SCORE` | NUMBER | Model probability of ability. |
+| `PRIORITY_SCORE` | NUMBER | Composite score for sorting worklists. |
+| `CURRENT_QUADRANT` | VARCHAR | **1**: Ideal, **2**: Vulnerable, **3**: Resistant, **4**: High Risk. |
 
-**Parquet Schema:**
-- `CUST_INFO_ID` or `ACCOUNT_ID` - Customer identifier
-- `WILLINGNESS_SCORE` - Prediction probability (0.0-1.0)
-
-### Next Steps (Manual)
-
-The scorer caches predictions to Parquet. To load them into the database:
-
-1. **Load Parquet to staging table** (external table or bulk insert)
-2. **Execute MERGE** using the SQL skeleton printed by the scorer
-3. **Verify** results in `COLLECTION_SCORES` table
+---
 
 ## Project Structure
 
 ```
 Collection-AI/
-├── .env                    # Configuration (gitignored)
+├── .env                    # Secrets & Config
 ├── src/
-│   ├── main.py            # Entry point - routes TRAIN/SCORE modes
-│   ├── core/
-│   │   ├── config.py      # Settings (loads from .env)
-│   │   ├── logger.py      # Logging setup
-│   │   └── taxonomy.py    # Error advisor
-│   ├── database/
-│   │   ├── connection.py  # Oracle connection pool (singleton)
-│   │   ├── queries.py     # Query execution helpers
-│   │   ├── repository.py  # Data persistence layer
-│   │   └── features/      # SQL feature queries
-│   │       ├── willingness.sql
-│   │       └── ability.sql
-│   ├── models/
+│   ├── main.py            # Pipeline Orchestrator
+│   ├── core/              # Config, Logging, Error Handling
+│   ├── database/          # Oracle Repo & SQL Feature Files
+│   ├── models/            # XGBoost Trainers & Scorers
 │   │   ├── willingness/
-│   │   │   ├── trainer.py # Willingness training pipeline
-│   │   │   └── scorer.py  # Willingness inference engine
 │   │   └── ability/
-│   │       ├── trainer.py # Ability training pipeline
-│   │       └── scorer.py  # Ability inference engine
 │   └── engine/
-│       └── matrix.py      # Score integration and quadrant assignment
-├── models/                # Saved model artifacts
-├── data/cache/            # Parquet prediction cache
-└── mlruns/               # MLflow experiment tracking
+│       └── matrix.py      # Logic for combining scores & quadrants
+├── models/                # Saved JSON models & pointer files
+└── data/cache/            # Intermediate Parquet files
 ```
 
-## Key Technologies
+## MLflow Integration
 
-| Component | Technology | Why? |
-|-----------|-----------|------|
-| **Data Processing** | Polars | 5-10x faster than pandas |
-| **ML Engine** | XGBoost | Industry-standard gradient boosting |
-| **Optimization** | Optuna | Efficient hyperparameter tuning |
-| **Experiment Tracking** | MLflow | Reproducibility & model registry |
-| **Database** | Oracle (oracledb) | Enterprise connection pooling |
-
-## System Flow
-
-### Complete Pipeline Overview
-
+Track experiments, metrics, and parameters:
+```bash
+mlflow ui
 ```
-1. DATA EXTRACTION
-   ├─ Fetch features: willingness.sql
-   ├─ Fetch features: ability.sql
-   └─ Load into Polars DataFrames
-
-2. MODEL TRAINING (MODE=TRAIN)
-   ├─ Willingness Model
-   │  ├─ Target: IS_WILLING (payment behavior)
-   │  ├─ Optuna: Minimize logloss
-   │  └─ Save: models/willingness_v{timestamp}.json
-   │
-   └─ Ability Model
-      ├─ Target: IS_STABLE (financial health)
-      ├─ Optuna: Maximize AUC
-      └─ Save: models/ability_v{timestamp}.json
-
-3. BATCH SCORING (MODE=SCORE)
-   ├─ Willingness Scorer
-   │  ├─ Load: latest_willingness.json
-   │  ├─ Predict: WILLINGNESS_SCORE
-   │  └─ Cache: data/cache/willingness_scores_{date}.parquet
-   │
-   └─ Ability Scorer
-      ├─ Load: latest_ability.json
-      ├─ Predict: ABILITY_SCORE (with null fill)
-      └─ Cache: data/cache/ability_scores_{date}.parquet
-
-4. MATRIX INTEGRATION
-   ├─ Join: Willingness + Ability (outer join, fill nulls with 0.0)
-   ├─ Calculate: NBA_PRIORITY = (WILLINGNESS * 0.6) + (ABILITY * 0.4)
-   ├─ Assign: CURRENT_QUADRANT (Q1/Q2/Q3/Q4)
-   ├─ Log: Quadrant distribution
-   └─ Persist: Bulk MERGE to COLLECTION_CUSTOMERS table
-```
-
-### Training Pipeline Details (`MODE=TRAIN`)
-
-**Willingness Model:**
-1. Data Extraction: Execute `willingness.sql`
-2. Target Engineering: `IS_WILLING = 1 if (PTP_KEPT_COUNT > 0 OR TOTAL_PAYMENT_AMT > 0) else 0`
-3. Optimization: Minimize logloss with Optuna (30 trials, 3-fold CV)
-4. Search Space: eta (0.01-0.3), max_depth (3-10), subsample (0.5-1.0)
-5. Training: XGBoost with best params
-6. MLflow: Log params, metrics (AUC, Precision, Recall), model
-7. Save: `models/willingness_v{YYYYMMDD_HHMMSS}.json` + pointer file
-
-**Ability Model:**
-1. Data Extraction: Execute `ability.sql`
-2. Target Engineering: `IS_STABLE = 1 if (NSF_COUNT == 0 AND CASH_RUNWAY_MONTHS > 0.5 AND UTILIZATION_RATE < 1.0) else 0`
-3. Optimization: Maximize AUC with Optuna (30 trials, 3-fold CV)
-4. Search Space: eta (0.01-0.3), max_depth (3-8), subsample (0.6-1.0), colsample_bytree (0.6-1.0)
-5. Training: XGBoost with best params
-6. MLflow: Log params, metrics (AUC, Precision, Recall), model
-7. Save: `models/ability_v{YYYYMMDD_HHMMSS}.json` + pointer file
-
-### Scoring Pipeline Details (`MODE=SCORE`)
-
-**1. Individual Model Scoring:**
-- Each model (Willingness, Ability) generates predictions independently
-- Results cached to Parquet: `data/cache/{model}_scores_{date}.parquet`
-- Schema: `CUST_INFO_ID` + `{MODEL}_SCORE`
-
-**2. Matrix Integration:**
-- Load both Parquet files
-- Outer join on `CUST_INFO_ID` (customers may exist in one model only)
-- Fill missing scores with 0.0 for safety
-- Calculate composite priority: `NBA_PRIORITY = (WILLINGNESS * 0.6) + (ABILITY * 0.4)`
-
-**3. Quadrant Assignment:**
-- Q1 (Ideal): Willingness > 0.5 AND Ability > 0.5
-- Q2 (Vulnerable): Willingness > 0.5 AND Ability <= 0.5
-- Q3 (Resistant): Willingness <= 0.5 AND Ability > 0.5
-- Q4 (High Risk): Willingness <= 0.5 AND Ability <= 0.5
-
-**4. Database Persistence:**
-- Bulk MERGE operation to `COLLECTION_CUSTOMERS` table
-- Updates: `willingness_score`, `ability_score`, `priority_score`, `current_quadrant`, `last_scored_at`
-- Fault tolerant: Uses `executemany` with `batcherrors=True`
-
-### Key Design Decisions
-
-**Null Handling:** When a customer exists in only one model output, missing scores are filled with 0.0 to prevent calculation errors and ensure all customers are scored.
-
-**Weighting Rationale:** NBA_PRIORITY uses 60% Willingness + 40% Ability because willingness is more actionable (behavioral change) while ability reflects structural constraints.
-
-**Database Strategy:** All database operations use dynamically loaded SQL scripts rather than hardcoded queries for flexibility and maintainability.
+*   **Metrics**: AUC, Precision, Recall, LogLoss.
+*   **Parameters**: XGBoost hyperparameters (depth, eta, etc.) tuned via Optuna.
 
 ## Troubleshooting
 
-### Import Error: `ModuleNotFoundError: No module named 'src'`
-
-**Solution**: Always run from project root using module syntax:
-```bash
-# Correct
-python -m src.main
-
-# Wrong
-python src/main.py
-```
-
-### Database Connection Failed
-
-Check `.env` credentials and DSN format:
-```bash
-DB_DSN=host:port/service_name  # Example: 192.168.1.10:1521/ORCL
-```
-
-### MLflow UI Not Starting
-
-```bash
-# Check if port 5000 is available
-mlflow ui --port 5001
-```
-
-## Development Notes
-
-- **Singleton Pattern**: Database connection uses singleton (`src.database.connection.db`)
-- **Type Hints**: Full type annotations for better IDE support
-- **Logging**: Structured logging via `src.core.logger`
-- **Error Handling**: Custom `ErrorAdvisor` for diagnostic messages
-- **SOLID Principles**: Clean separation of concerns
-
-## License
-
-Internal banking use only.
+*   **Feature Mismatch Error**: Ensure `SNAPSHOT_DATE` and Target columns are excluded from `feature_cols` in `trainer.py` and `scorer.py`.
+*   **ImportError**: Run as a module from root: `python -m src.main`.
+*   **Database Error**: Check `repository.py` schema definitions match actual DB columns.

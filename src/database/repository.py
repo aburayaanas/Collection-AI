@@ -55,23 +55,15 @@ class CollectionRepository:
         schema = {
             "CUST_INFO_ID": pl.String,
             # PTP Features (Integers)
-            "TOTAL_PTP_COUNT": pl.Int64,
-            "PTP_BROKEN_COUNT": pl.Int64,
-            "PTP_KEPT_COUNT": pl.Int64,
-            # PTP Features (Floats)
-            "PTP_BROKEN_RATIO": pl.Float64,
-            "DAYS_SINCE_LAST_BROKEN_PTP": pl.Float64,  # Nullable recency
-            # Contact Features (Integers)
-            "TOTAL_ATTEMPTS_LIFETIME": pl.Int64,
-            "SUCCESSFUL_CONTACTS": pl.Int64,
-            "SMS_DELIVERED_COUNT": pl.Int64,
-            "CALL_ANSWERED_COUNT": pl.Int64,
-            # Contact Features (Floats)
-            "RPC_RATE": pl.Float64,
-            "DAYS_SINCE_LAST_RPC": pl.Float64,  # Nullable recency
-            # Deal & Payment Features (Floats)
-            "TOTAL_PAYMENT_AMT": pl.Float64,
-            "TOTAL_OVERDUE_AMT": pl.Float64,
+            "SNAPSHOT_DATE": pl.String,
+            "DAYS_SINCE_LAST_RPC": pl.Int64,
+            "PTP_RELIABILITY_RATIO": pl.Float64,
+            "PAYMENT_VELOCITY_30D": pl.Int64,
+            "PARTIAL_PAYMENT_RATIO": pl.Float64,
+            "SELF_CURE_HISTORY_FLAG": pl.Int64,
+            "BOUNCE_RATE_60D": pl.Float64,
+            "BROKEN_PTP_COUNT_6M": pl.Int64,
+            "TARGET_WILLINGNESS": pl.Int64,
         }
         
         # Create DataFrame with strict schema
@@ -81,17 +73,13 @@ class CollectionRepository:
         
         # Post-processing: Fill nulls with 0 for safety (except recency columns which should stay null)
         numeric_cols_to_fill = [
-            "TOTAL_PTP_COUNT", "PTP_BROKEN_COUNT", "PTP_KEPT_COUNT",
-            "PTP_BROKEN_RATIO", "TOTAL_ATTEMPTS_LIFETIME", "SUCCESSFUL_CONTACTS",
-            "RPC_RATE", "SMS_DELIVERED_COUNT", "CALL_ANSWERED_COUNT",
-            "TOTAL_PAYMENT_AMT", "TOTAL_OVERDUE_AMT"
+            "DAYS_SINCE_LAST_RPC", "PTP_RELIABILITY_RATIO", "PAYMENT_VELOCITY_30D", "PARTIAL_PAYMENT_RATIO", "SELF_CURE_HISTORY_FLAG", "BOUNCE_RATE_60D", "BROKEN_PTP_COUNT_6M"
         ]
         
         df = df.with_columns([
             pl.col(col).fill_null(0) for col in numeric_cols_to_fill
         ])
         
-        # Recency columns can stay null (they represent "never happened" when null)
         logger.info("Applied null-filling for numeric features")
         
         return df
@@ -128,21 +116,14 @@ class CollectionRepository:
         # Define strict schema mapping (SQL column -> Polars type)
         schema = {
             "CUST_INFO_ID": pl.String,
-            # Income & Liquidity Features
-            "AVG_MONTHLY_INCOME": pl.Float64,
-            "INCOME_VOLATILITY": pl.Float64,
-            "CURRENT_BALANCE": pl.Float64,
-            # Spending & Stability Features
-            "TOTAL_OUTFLOW_6M": pl.Float64,
-            "SPENDING_VOLATILITY": pl.Float64,
-            "ENTROPY_CATEGORY_COUNT": pl.Int64,
-            # Financial Stress Features
-            "NSF_COUNT": pl.Int64,
-            "FIXED_OBLIGATIONS": pl.Float64,
-            "UTILIZATION_RATE": pl.Float64,
-            # Calculated Features
-            "DBR_RATIO": pl.Float64,
-            "CASH_RUNWAY_MONTHS": pl.Float64,
+            "SNAPSHOT_DATE": pl.String,
+            "INFLOW_VARIANCE_30D": pl.Float64,
+            "CASH_RUNWAY_DAYS_ESTIMATED": pl.Float64,
+            "SPENDING_VOLATILITY_CV_60D": pl.Float64,
+            "DEBT_SERVICE_PROXY_RATIO": pl.Float64,
+            "NSF_EVENT_RATE_60D": pl.Float64,
+            "ZERO_BALANCE_DAYS_RATIO_30D": pl.Float64,
+            "TARGET_ABILITY": pl.Int64
         }
         
         # Create DataFrame with strict schema
@@ -152,10 +133,7 @@ class CollectionRepository:
         
         # Post-processing: Fill nulls with 0 for safety
         numeric_cols_to_fill = [
-            "AVG_MONTHLY_INCOME", "INCOME_VOLATILITY", "CURRENT_BALANCE",
-            "TOTAL_OUTFLOW_6M", "SPENDING_VOLATILITY", "ENTROPY_CATEGORY_COUNT",
-            "NSF_COUNT", "FIXED_OBLIGATIONS", "UTILIZATION_RATE",
-            "DBR_RATIO", "CASH_RUNWAY_MONTHS"
+            "INFLOW_VARIANCE_30D", "CASH_RUNWAY_DAYS_ESTIMATED", "SPENDING_VOLATILITY_CV_60D", "DEBT_SERVICE_PROXY_RATIO", "NSF_EVENT_RATE_60D", "ZERO_BALANCE_DAYS_RATIO_30D"
         ]
         
         df = df.with_columns([
@@ -168,21 +146,10 @@ class CollectionRepository:
     
     def upsert_matrix_results(self, df: pl.DataFrame) -> None:
         """
-        Bulk upsert matrix results into COLLECTION_CUSTOMERS table.
+        Bulk upsert matrix results into PIO_COLL_AI_MATRIX_RESULTS table.
         
         Uses MERGE statement to update existing records or insert new ones.
         Executes in batches using executemany for performance.
-        
-        Args:
-            df: DataFrame with columns:
-                - CUST_INFO_ID
-                - WILLINGNESS_SCORE
-                - ABILITY_SCORE
-                - NBA_PRIORITY
-                - CURRENT_QUADRANT
-                
-        Raises:
-            Exception: If database operation fails
         """
         logger.info(f"Upserting {df.height:,} matrix results to database...")
         
@@ -195,25 +162,25 @@ class CollectionRepository:
             "CURRENT_QUADRANT"
         ]).to_dicts()
         
-        # MERGE SQL statement
+        # Corrected MERGE SQL statement matching your actual schema
         merge_sql = """
-        MERGE INTO COLLECTION_CUSTOMERS c
-        USING dual ON (c.account_id = :CUST_INFO_ID)
+        MERGE INTO PIO_COLL_AI_MATRIX_RESULTS c
+        USING dual ON (c.CUST_INFO_ID = :CUST_INFO_ID)
         WHEN MATCHED THEN
             UPDATE SET
-                willingness_score = :WILLINGNESS_SCORE,
-                ability_score = :ABILITY_SCORE,
-                priority_score = :NBA_PRIORITY,
-                current_quadrant = :CURRENT_QUADRANT,
-                last_scored_at = SYSDATE
+                WILLINGNESS_SCORE = :WILLINGNESS_SCORE,
+                ABILITY_SCORE = :ABILITY_SCORE,
+                PRIORITY_SCORE = :NBA_PRIORITY,
+                CURRENT_QUADRANT = :CURRENT_QUADRANT,
+                LAST_SCORED_AT = CURRENT_TIMESTAMP
         WHEN NOT MATCHED THEN
             INSERT (
-                account_id, 
-                willingness_score, 
-                ability_score, 
-                priority_score, 
-                current_quadrant, 
-                last_scored_at
+                CUST_INFO_ID, 
+                WILLINGNESS_SCORE, 
+                ABILITY_SCORE, 
+                PRIORITY_SCORE, 
+                CURRENT_QUADRANT, 
+                LAST_SCORED_AT
             )
             VALUES (
                 :CUST_INFO_ID, 
@@ -221,33 +188,25 @@ class CollectionRepository:
                 :ABILITY_SCORE, 
                 :NBA_PRIORITY, 
                 :CURRENT_QUADRANT, 
-                SYSDATE
+                CURRENT_TIMESTAMP
             )
         """
         
-        # Execute bulk upsert
         with db.get_connection() as conn:
             cursor = conn.cursor()
-            
             try:
                 # Use executemany with batcherrors=True for fault tolerance
                 cursor.executemany(merge_sql, records, batcherrors=True)
                 
-                # Check for batch errors
                 errors = cursor.getbatcherrors()
                 if errors:
                     logger.warning(f"Encountered {len(errors)} batch errors during upsert")
-                    for error in errors[:10]:  # Log first 10 errors
+                    for error in errors[:10]:
                         logger.warning(f"  Row {error.offset}: {error.message}")
                 
-                # Commit transaction
                 conn.commit()
-                
                 successful = df.height - len(errors)
-                logger.info(f"Successfully upserted {successful:,} records")
-                
-                if errors:
-                    logger.warning(f"Failed to upsert {len(errors):,} records")
+                logger.info(f"Successfully upserted {successful:,} records to PIO_COLL_AI_MATRIX_RESULTS")
                 
             except Exception as e:
                 conn.rollback()

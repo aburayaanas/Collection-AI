@@ -8,6 +8,64 @@ from src.core.taxonomy import ErrorAdvisor
 from src.core.config import settings
 
 
+def run_pipeline(logger):
+    """
+    Execute the full end-to-end pipeline.
+    
+    Sequence:
+    1. Train Willingness Model
+    2. Train Ability Model
+    3. Score Willingness (using latest model)
+    4. Score Ability (using latest model)
+    5. Matrix Integration (Combine scores -> Database)
+    """
+    from src.database.repository import CollectionRepository
+    from src.models.willingness.trainer import WillingnessTrainer
+    from src.models.ability.trainer import AbilityTrainer
+    from src.models.willingness.scorer import WillingnessScorer
+    from src.models.ability.scorer import AbilityScorer
+    from src.engine.matrix import MatrixEngine
+    
+    repository = CollectionRepository()
+    
+    # --- Step 1: Train Willingness Model ---
+    if settings.MODE == "TRAIN" or settings.MODE == "FULL":
+        logger.info(">>> STEP 1/5: Training Willingness Model")
+        df_will = repository.get_willingness_training_data()
+        will_trainer = WillingnessTrainer()
+        will_trainer.train(df_will)
+    
+    # --- Step 2: Train Ability Model ---
+    if settings.MODE == "TRAIN" or settings.MODE == "FULL":
+        logger.info(">>> STEP 2/5: Training Ability Model")
+        df_abil = repository.get_ability_training_data()
+        abil_trainer = AbilityTrainer()
+        abil_trainer.train(df_abil)
+        
+    # --- Step 3: Score Willingness ---
+    logger.info(">>> STEP 3/5: Scoring Willingness")
+    # Note: In production, scoring data might be different from training data
+    # For now, we reuse the training data fetcher but in real life this would be a separate method
+    df_score_will = repository.get_willingness_training_data() 
+    will_scorer = WillingnessScorer()
+    will_cache_path = will_scorer.score(df_score_will)
+    
+    # --- Step 4: Score Ability ---
+    logger.info(">>> STEP 4/5: Scoring Ability")
+    df_score_abil = repository.get_ability_training_data()
+    abil_scorer = AbilityScorer()
+    abil_cache_path = abil_scorer.score(df_score_abil)
+    
+    # --- Step 5: Matrix Integration ---
+    logger.info(">>> STEP 5/5: Matrix Integration & Persistence")
+    matrix_engine = MatrixEngine()
+    
+    # This loads both parquet files, joins them, calculates quadrants, and upserts to DB
+    matrix_engine.integrate_and_save(will_cache_path, abil_cache_path)
+    
+    logger.info("Pipeline completed successfully!")
+
+
 def main():
     """Main entry point for Collection AI batch job."""
     # Initialize logging first
@@ -20,13 +78,8 @@ def main():
         db.initialize_pool()
         logger.info("Database connection pool initialized successfully")
         
-        # Route based on MODE setting
-        if settings.MODE.upper() == "TRAIN":
-            run_training_mode(logger)
-        elif settings.MODE.upper() == "SCORE":
-            run_scoring_mode(logger)
-        else:
-            raise ValueError(f"Invalid MODE: {settings.MODE}. Must be 'TRAIN' or 'SCORE'")
+        # Execute full pipeline
+        run_pipeline(logger)
             
     except Exception as e:
         # Use ErrorAdvisor to get actionable diagnostic
@@ -36,89 +89,6 @@ def main():
     finally:
         db.close_pool()
         logger.info("Job Finished. Database pool closed.")
-
-
-def run_training_mode(logger):
-    """Execute model training pipeline for willingness or ability model."""
-    from src.database.repository import CollectionRepository
-    
-    logger.info("=== TRAINING MODE ===")
-    logger.info(f"Model Type: {settings.MODEL_TYPE}")
-    
-    # Initialize repository
-    repository = CollectionRepository()
-    
-    # Route based on MODEL_TYPE
-    if settings.MODEL_TYPE.upper() == "WILLINGNESS":
-        from src.models.willingness.trainer import WillingnessTrainer
-        
-        # Fetch willingness training data
-        df = repository.get_willingness_training_data()
-        
-        # Train willingness model
-        logger.info("Initializing Willingness trainer...")
-        trainer = WillingnessTrainer(model_dir="models")
-        trainer.train(df)
-        
-    elif settings.MODEL_TYPE.upper() == "ABILITY":
-        from src.models.ability.trainer import AbilityTrainer
-        
-        # Fetch ability training data
-        df = repository.get_ability_training_data()
-        
-        # Train ability model
-        logger.info("Initializing Ability trainer...")
-        trainer = AbilityTrainer(model_dir="models")
-        trainer.train(df)
-        
-    else:
-        raise ValueError(f"Invalid MODEL_TYPE: {settings.MODEL_TYPE}. Must be 'WILLINGNESS' or 'ABILITY'")
-    
-    logger.info("Training completed successfully!")
-
-
-def run_scoring_mode(logger):
-    """Execute batch scoring pipeline for willingness or ability model."""
-    from src.database.repository import CollectionRepository
-    
-    logger.info("=== SCORING MODE ===")
-    logger.info(f"Model Type: {settings.MODEL_TYPE}")
-    
-    # Initialize repository
-    repository = CollectionRepository()
-    
-    # Route based on MODEL_TYPE
-    if settings.MODEL_TYPE.upper() == "WILLINGNESS":
-        from src.models.willingness.scorer import WillingnessScorer
-        
-        # Fetch data
-        df = repository.get_willingness_training_data()
-        
-        # Score with willingness model
-        logger.info("Loading Willingness model...")
-        scorer = WillingnessScorer(model_dir="models", cache_dir="data/cache")
-        cache_path = scorer.score(df)
-        logger.info(f"Predictions cached to: {cache_path}")
-        scorer.generate_sql_skeleton()
-        
-    elif settings.MODEL_TYPE.upper() == "ABILITY":
-        from src.models.ability.scorer import AbilityScorer
-        
-        # Fetch data
-        df = repository.get_ability_training_data()
-        
-        # Score with ability model
-        logger.info("Loading Ability model...")
-        scorer = AbilityScorer(model_dir="models", cache_dir="data/cache")
-        cache_path = scorer.score(df)
-        logger.info(f"Predictions cached to: {cache_path}")
-        scorer.generate_sql_skeleton()
-        
-    else:
-        raise ValueError(f"Invalid MODEL_TYPE: {settings.MODEL_TYPE}. Must be 'WILLINGNESS' or 'ABILITY'")
-    
-    logger.info("Scoring completed successfully!")
-    logger.info("Next step: Load Parquet file into database staging table and execute MERGE")
 
 
 if __name__ == "__main__":
