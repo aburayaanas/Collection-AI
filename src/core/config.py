@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     
     DB_MIN_POOL: int = Field(default=2, ge=1)
     DB_MAX_POOL: int = Field(default=5, ge=2)
+
+    INST_CODE: str = os.getenv("INST_CODE", "1")
+    COUNTRY_CODE: str = os.getenv("COUNTRY_CODE", "400")
     
     BATCH_SIZE: int = 1000 
     
