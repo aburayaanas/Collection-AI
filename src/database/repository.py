@@ -9,7 +9,8 @@ import polars as pl
 
 from src.core.logger import get_logger
 from src.database.connection import db
-from src.database.queries import get_query
+from src.database.queries import get_query, get_snap_date
+from src.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -38,12 +39,21 @@ class CollectionRepository:
         """
         logger.info("Fetching willingness training data from database...")
         
+        # Get snapshot date
+        snap_date = get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
+        if not snap_date:
+             # Fallback or error - let's log and raise
+             logger.error("Could not determine snapshot date for filtering!")
+             raise ValueError("Snapshot date retrieval failed")
+
+        logger.info(f"Filtering data for snapshot date: {snap_date}")
+
         # Execute query
         sql = get_query("willingness")
         
         with db.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(sql)
+            cursor.execute(sql, {'day_date': snap_date})
             
             # Fetch all rows
             rows = cursor.fetchall()
@@ -100,12 +110,19 @@ class CollectionRepository:
         """
         logger.info("Fetching ability training data from database...")
         
+        # Get snapshot date
+        snap_date = get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
+        if not snap_date:
+             raise ValueError("Snapshot date retrieval failed")
+             
+        logger.info(f"Filtering data for snapshot date: {snap_date}")
+
         # Execute query
         sql = get_query("ability")
         
         with db.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(sql)
+            cursor.execute(sql, {'day_date': snap_date})
             
             # Fetch all rows
             rows = cursor.fetchall()
@@ -155,6 +172,9 @@ class CollectionRepository:
         
         # Convert DataFrame to list of dictionaries
         records = df.select([
+            "DAY_DATE",
+            "INST_CODE",
+            "COUNTRY_CODE",
             "CUST_INFO_ID",
             "WILLINGNESS_SCORE",
             "ABILITY_SCORE",
@@ -164,33 +184,44 @@ class CollectionRepository:
         
         # Corrected MERGE SQL statement matching your actual schema
         merge_sql = """
-        MERGE INTO PIO_COLL_AI_MATRIX_RESULTS c
-        USING dual ON (c.CUST_INFO_ID = :CUST_INFO_ID)
-        WHEN MATCHED THEN
-            UPDATE SET
-                WILLINGNESS_SCORE = :WILLINGNESS_SCORE,
-                ABILITY_SCORE = :ABILITY_SCORE,
-                PRIORITY_SCORE = :NBA_PRIORITY,
-                CURRENT_QUADRANT = :CURRENT_QUADRANT,
-                LAST_SCORED_AT = CURRENT_TIMESTAMP
-        WHEN NOT MATCHED THEN
-            INSERT (
-                CUST_INFO_ID, 
-                WILLINGNESS_SCORE, 
-                ABILITY_SCORE, 
-                PRIORITY_SCORE, 
-                CURRENT_QUADRANT, 
-                LAST_SCORED_AT
-            )
-            VALUES (
-                :CUST_INFO_ID, 
-                :WILLINGNESS_SCORE, 
-                :ABILITY_SCORE, 
-                :NBA_PRIORITY, 
-                :CURRENT_QUADRANT, 
-                CURRENT_TIMESTAMP
-            )
-        """
+                MERGE INTO PIO_COLL_AI_MATRIX_RESULTS c
+                USING dual ON (
+                    c.DAY_DATE = TO_DATE(:DAY_DATE, 'YYYY-MM-DD') AND
+                    c.INST_CODE = :INST_CODE AND
+                    c.COUNTRY_CODE = :COUNTRY_CODE AND
+                    c.CUST_INFO_ID = :CUST_INFO_ID
+                )
+                WHEN MATCHED THEN
+                    UPDATE SET
+                        WILLINGNESS_SCORE = :WILLINGNESS_SCORE,
+                        ABILITY_SCORE = :ABILITY_SCORE,
+                        PRIORITY_SCORE = :NBA_PRIORITY,
+                        CURRENT_QUADRANT = :CURRENT_QUADRANT,
+                        LAST_SCORED_AT = CURRENT_TIMESTAMP
+                WHEN NOT MATCHED THEN
+                    INSERT (
+                        DAY_DATE,
+                        INST_CODE,
+                        COUNTRY_CODE,
+                        CUST_INFO_ID, 
+                        WILLINGNESS_SCORE, 
+                        ABILITY_SCORE, 
+                        PRIORITY_SCORE, 
+                        CURRENT_QUADRANT, 
+                        LAST_SCORED_AT
+                    )
+                    VALUES (
+                        TO_DATE(:DAY_DATE, 'YYYY-MM-DD'),
+                        :INST_CODE,
+                        :COUNTRY_CODE,
+                        :CUST_INFO_ID, 
+                        :WILLINGNESS_SCORE, 
+                        :ABILITY_SCORE, 
+                        :NBA_PRIORITY, 
+                        :CURRENT_QUADRANT, 
+                        CURRENT_TIMESTAMP
+                    )
+                """
         
         with db.get_connection() as conn:
             cursor = conn.cursor()

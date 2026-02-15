@@ -12,6 +12,8 @@ import polars as pl
 
 from src.core.logger import get_logger
 from src.database.repository import CollectionRepository
+from src.database.queries import get_snap_date
+from src.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -89,6 +91,17 @@ class MatrixEngine:
         
         # Log quadrant distribution
         self._log_quadrant_distribution(df_final)
+        
+        current_day_date = get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
+
+        # Append the configuration values to every row in the final DataFrame
+        logger.info(f"Appending tenant context: {settings.INST_CODE}, {settings.COUNTRY_CODE}, {current_day_date}")
+        
+        df_final = df_final.with_columns([
+            pl.lit(current_day_date).alias("DAY_DATE"),
+            pl.lit(settings.INST_CODE).alias("INST_CODE"),
+            pl.lit(settings.COUNTRY_CODE).alias("COUNTRY_CODE")
+        ])
         
         # Step 6: Persist to database
         logger.info("Persisting results to database...")
