@@ -6,64 +6,7 @@ from src.database.connection import db
 from src.core.logger import setup_logging, get_logger
 from src.core.taxonomy import ErrorAdvisor
 from src.core.config import settings
-
-
-def run_pipeline(logger):
-    """
-    Execute the full end-to-end pipeline.
-    
-    Sequence:
-    1. Train Willingness Model
-    2. Train Ability Model
-    3. Score Willingness (using latest model)
-    4. Score Ability (using latest model)
-    5. Matrix Integration (Combine scores -> Database)
-    """
-    from src.database.repository import CollectionRepository
-    from src.models.willingness.trainer import WillingnessTrainer
-    from src.models.ability.trainer import AbilityTrainer
-    from src.models.willingness.scorer import WillingnessScorer
-    from src.models.ability.scorer import AbilityScorer
-    from src.engine.matrix import MatrixEngine
-    
-    repository = CollectionRepository()
-    
-    # --- Step 1: Train Willingness Model ---
-    if settings.MODE == "TRAIN" or settings.MODE == "FULL":
-        logger.info(">>> STEP 1/5: Training Willingness Model")
-        df_will = repository.get_willingness_training_data()
-        will_trainer = WillingnessTrainer()
-        will_trainer.train(df_will)
-    
-    # --- Step 2: Train Ability Model ---
-    if settings.MODE == "TRAIN" or settings.MODE == "FULL":
-        logger.info(">>> STEP 2/5: Training Ability Model")
-        df_abil = repository.get_ability_training_data()
-        abil_trainer = AbilityTrainer()
-        abil_trainer.train(df_abil)
-        
-    # --- Step 3: Score Willingness ---
-    logger.info(">>> STEP 3/5: Scoring Willingness")
-    # Note: In production, scoring data might be different from training data
-    # For now, we reuse the training data fetcher but in real life this would be a separate method
-    df_score_will = repository.get_willingness_training_data() 
-    will_scorer = WillingnessScorer()
-    will_cache_path = will_scorer.score(df_score_will)
-    
-    # --- Step 4: Score Ability ---
-    logger.info(">>> STEP 4/5: Scoring Ability")
-    df_score_abil = repository.get_ability_training_data()
-    abil_scorer = AbilityScorer()
-    abil_cache_path = abil_scorer.score(df_score_abil)
-    
-    # --- Step 5: Matrix Integration ---
-    logger.info(">>> STEP 5/5: Matrix Integration & Persistence")
-    matrix_engine = MatrixEngine()
-    
-    # This loads both parquet files, joins them, calculates quadrants, and upserts to DB
-    matrix_engine.integrate_and_save(will_cache_path, abil_cache_path)
-    
-    logger.info("Pipeline completed successfully!")
+from src.database.queries import execute_query, get_query
 
 
 def main():
@@ -78,8 +21,13 @@ def main():
         db.initialize_pool()
         logger.info("Database connection pool initialized successfully")
         
-        # Execute full pipeline
-        run_pipeline(logger)
+        # Route based on MODE setting
+        if settings.MODE.upper() == "TRAIN":
+            run_training_mode(logger)
+        elif settings.MODE.upper() == "SCORE":
+            run_scoring_mode(logger)
+        else:
+            raise ValueError(f"Invalid MODE: {settings.MODE}. Must be 'TRAIN' or 'SCORE'")
             
     except Exception as e:
         # Use ErrorAdvisor to get actionable diagnostic
@@ -104,7 +52,6 @@ def run_training_mode(logger):
     logger.info(f"Retrieved {len(raw_data):,} records from database")
     
     # Convert to Polars DataFrame
-    # Assuming raw_data is a list of tuples/rows from cursor.fetchall()
     df = pl.DataFrame(raw_data)
     logger.info(f"Converted to Polars DataFrame: {df.shape[0]:,} rows x {df.shape[1]} columns")
     
@@ -117,34 +64,89 @@ def run_training_mode(logger):
 
 
 def run_scoring_mode(logger):
-    """Execute batch scoring pipeline."""
+    """Execute batch scoring pipeline with SHAP explanation phase."""
     import polars as pl
     from src.models.willingness.scorer import WillingnessScorer
+    from src.models.ability.scorer import AbilityScorer
+    from src.explainability.shadow_runner import (
+        run_shap_phase,
+        ExplainabilityConfig,
+    )
     
     logger.info("=== SCORING MODE ===")
-    logger.info("Fetching data for scoring...")
     
-    # Fetch data to score
-    raw_data = execute_query(get_query("willingness"))
-    logger.info(f"Retrieved {len(raw_data):,} records for scoring")
+    # ── 1. Score Willingness ─────────────────────────────────────────
+    logger.info("Fetching willingness data for scoring...")
+    raw_will = execute_query(get_query("willingness"))
+    logger.info(f"Retrieved {len(raw_will):,} willingness records")
+    df_will = pl.DataFrame(raw_will)
     
-    # Convert to Polars DataFrame
-    df = pl.DataFrame(raw_data)
-    logger.info(f"Converted to Polars DataFrame: {df.shape[0]:,} rows x {df.shape[1]} columns")
+    logger.info("Loading willingness model...")
+    will_scorer = WillingnessScorer(model_dir="models", cache_dir="data/cache")
+    will_cache = will_scorer.score(df_will)
+    logger.info(f"Willingness predictions cached to: {will_cache}")
     
-    # Initialize scorer
-    logger.info("Loading trained model...")
-    scorer = WillingnessScorer(model_dir="models", cache_dir="data/cache")
+    # ── 2. Score Ability ─────────────────────────────────────────────
+    logger.info("Fetching ability data for scoring...")
+    raw_abi = execute_query(get_query("ability"))
+    logger.info(f"Retrieved {len(raw_abi):,} ability records")
+    df_abi = pl.DataFrame(raw_abi)
     
-    # Generate predictions and cache to Parquet
-    cache_path = scorer.score(df)
-    logger.info(f"Predictions cached to: {cache_path}")
+    logger.info("Loading ability model...")
+    abi_scorer = AbilityScorer(model_dir="models", cache_dir="data/cache")
+    abi_cache = abi_scorer.score(df_abi)
+    logger.info(f"Ability predictions cached to: {abi_cache}")
     
-    # Print SQL skeleton for reference
-    scorer.generate_sql_skeleton()
+    # ── 3. SHAP Explanation Phase ────────────────────────────────────
+    #    Runs AFTER scoring. Failures never crash the pipeline.
+    logger.info("=== SHAP EXPLANATION PHASE ===")
     
-    logger.info("Scoring completed successfully!")
-    logger.info("Next step: Load Parquet file into database staging table and execute MERGE")
+    shap_config = ExplainabilityConfig(
+        enabled=True,
+        top_n=3,
+        batch_size=20,
+        insert_dwh=True,
+    )
+    
+    # — Willingness SHAP —
+    logger.info("Running SHAP for willingness model...")
+    will_shap = run_shap_phase(
+        scored_data=df_will,
+        model=will_scorer.model,
+        model_type="willingness",
+        model_version=f"willingness_{will_cache.split('_')[-1].replace('.parquet', '')}",
+        config=shap_config,
+        id_col="CUST_INFO_ID",
+    )
+    logger.info(
+        f"Willingness SHAP: success={will_shap.success}, "
+        f"dwh_rows={will_shap.dwh_rows_inserted}, "
+        f"time={will_shap.runtime_seconds:.2f}s"
+    )
+    
+    # — Ability SHAP —
+    logger.info("Running SHAP for ability model...")
+    abi_shap = run_shap_phase(
+        scored_data=df_abi,
+        model=abi_scorer.model,
+        model_type="ability",
+        model_version=f"ability_{abi_cache.split('_')[-1].replace('.parquet', '')}",
+        config=shap_config,
+        id_col="CUST_INFO_ID",
+    )
+    logger.info(
+        f"Ability SHAP: success={abi_shap.success}, "
+        f"dwh_rows={abi_shap.dwh_rows_inserted}, "
+        f"time={abi_shap.runtime_seconds:.2f}s"
+    )
+    
+    # ── 4. SQL skeleton (legacy reference) ───────────────────────────
+    will_scorer.generate_sql_skeleton()
+    
+    logger.info("Scoring + SHAP explanation completed successfully!")
+    logger.info(
+        "SHAP results inserted into PIO_COLL_AI_MATRIX_RESULTS on openbi2 DWH."
+    )
 
 
 if __name__ == "__main__":
