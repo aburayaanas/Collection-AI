@@ -33,8 +33,10 @@ DB_PASSWORD=your_password
 DB_DSN=host:port/service_name
 
 # App Settings
-MODE=FULL             # TRAIN, SCORE, or FULL (Recommended)
-MODEL_TYPE=WILLINGNESS # Not used in FULL mode
+MODE=FULL             # TRAIN, SCORE, or FULL
+MODEL_SCOPE=BOTH      # WILLINGNESS, ABILITY, or BOTH
+SHAP_SCOPE=BOTH       # WILLINGNESS, ABILITY, BOTH, or NONE
+# MODEL_TYPE=ABILITY  # Legacy, use MODEL_SCOPE
 DEBUG=True
 ```
 
