@@ -21,7 +21,7 @@ import os
 import tempfile
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 
 import numpy as np
 import polars as pl
