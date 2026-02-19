@@ -23,8 +23,10 @@ class Settings(BaseSettings):
     BATCH_SIZE: int = 1000 
     
     # --- Execution Mode ---
-    MODE: str = Field(default="SCORE", description="Execution mode: TRAIN or SCORE")
-    MODEL_TYPE: str = Field(default="WILLINGNESS", description="Model type: WILLINGNESS or ABILITY")
+    MODE: str = Field(default="FULL", description="Execution mode: TRAIN, SCORE, or FULL")
+    MODEL_SCOPE: str = Field(default="BOTH", description="Scope of models to run: WILLINGNESS, ABILITY, or BOTH")
+    SHAP_SCOPE: str = Field(default="BOTH", description="Scope of SHAP explanations: WILLINGNESS, ABILITY, BOTH, or NONE")
+    MODEL_TYPE: str = Field(default="WILLINGNESS", description="Legacy field, use MODEL_SCOPE instead")
     
     # --- Model Thresholds ---
     WILLINGNESS_THRESHOLD: float = 0.7

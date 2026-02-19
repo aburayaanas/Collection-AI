@@ -427,6 +427,9 @@ class CollectionShapExplainer:
             target_col,
             "IS_WILLING",
             "IS_STABLE",
+            "SNAPSHOT_DATE",
+            "TARGET_WILLINGNESS",
+            "TARGET_ABILITY",
             "row_idx",
         }
         if exclude_cols:

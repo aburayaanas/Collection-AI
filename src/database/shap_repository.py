@@ -9,13 +9,15 @@ Follows the AML bulk-insert pattern with constraint-violation handling.
 
 import logging
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any
 
 import polars as pl
 
 from src.core.logger import get_logger
 from src.database.connection import db
 from src.explainability.feature_name_expansion import format_shap_explanation
+from src.database.queries import get_snap_date
+from src.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -40,7 +42,7 @@ class ShapResultsRepository:
         SHAP_EXPLANATION   VARCHAR2(4000)  – Business-friendly text
         SHAP_DESCRIPTION   VARCHAR2(4000)  – Detailed feature descriptions
         SHAP_MODEL_TYPE    VARCHAR2(50)    – 'WILLINGNESS' or 'ABILITY'
-        SHAP_RAW_FEATURES  VARCHAR2(4000)  – Technical "FEAT: XX.X%" string
+        SHAP_RAW_FEATURES  VARCHAR2(4000)  – Technical "FEAT: XX.X%; ..." string
         SHAP_COMPUTED_DATE DATE            – Computation timestamp
     """
 
@@ -90,13 +92,33 @@ class ShapResultsRepository:
             f"(model_type={model_type}) into PIO_COLL_AI_MATRIX_RESULTS ..."
         )
 
-        # Build list of tuples matching the bind-variable order in the SQL:
-        #   :1 → CUST_INFO_ID
-        #   :2 → SHAP_MODEL_TYPE
-        #   :3 → SHAP_EXPLANATION  (business text, generated here)
-        #   :4 → SHAP_DESCRIPTION
-        #   :5 → SHAP_RAW_FEATURES
-        records: List[Tuple] = []
+        # Get snapshot date and org codes
+        snap_date = get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
+        if not snap_date:
+             logger.error("Could not determine snapshot date for SHAP update!")
+             return 0
+             
+        # Safe type conversion for binding
+        try:
+            inst_code_val = int(settings.INST_CODE)
+        except (ValueError, TypeError):
+            inst_code_val = settings.INST_CODE
+            
+        try:
+            country_code_val = int(settings.COUNTRY_CODE)
+        except (ValueError, TypeError):
+            country_code_val = settings.COUNTRY_CODE
+
+        # Build list of dictionaries matching the named bind variables in the SQL:
+        #   :cust_id
+        #   :model_type
+        #   :explanation
+        #   :description
+        #   :raw_features
+        #   :snap_date
+        #   :inst_code
+        #   :country_code
+        records: List[Dict[str, Any]] = []
         for row in unique_df.iter_rows(named=True):
             cust_id = row["CUST_INFO_ID"]
             raw_features = row.get("reason_cols", "")
@@ -107,13 +129,16 @@ class ShapResultsRepository:
                 raw_features, model_type=model_type
             )
 
-            records.append((
-                cust_id,
-                model_type.upper(),
-                explanation,
-                description,
-                raw_features,
-            ))
+            records.append({
+                "cust_id": cust_id,
+                "model_type": model_type.upper(),
+                "explanation": explanation,
+                "description": description,
+                "raw_features": raw_features,
+                "snap_date": snap_date,
+                "inst_code": inst_code_val,
+                "country_code": country_code_val,
+            })
 
         # Execute in batches
         total_success = 0
