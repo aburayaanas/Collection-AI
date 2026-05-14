@@ -4,6 +4,7 @@ from src.database.connection import db
 from src.core.logger import setup_logging, get_logger
 from src.core.taxonomy import ErrorAdvisor
 from src.core.config import settings
+from src.core.validation import validate_training_data, validate_scoring_data, validate_matrix_inputs
 from src.database.repository import CollectionRepository
 
 # ── Modular Pipeline Steps ──────────────────────────────────────────
@@ -24,6 +25,7 @@ def run_training_steps(logger):
         try:
             # Use repository to fetch data with date filter
             df = repo.get_willingness_training_data()
+            validate_training_data(df, target_col="TARGET_WILLINGNESS", context="Willingness Training")
             logger.info(f"Training on {df.height:,} records")
             trainer = WillingnessTrainer(model_dir="models")
             trainer.train(df)
@@ -37,6 +39,7 @@ def run_training_steps(logger):
         try:
             # Use repository to fetch data with date filter
             df = repo.get_ability_training_data()
+            validate_training_data(df, target_col="TARGET_ABILITY", context="Ability Training")
             logger.info(f"Training on {df.height:,} records")
             
             trainer = AbilityTrainer(model_dir="models")
@@ -66,6 +69,7 @@ def run_scoring_steps(logger) -> dict:
         try:
             # Use repository to fetch data with date filter
             df = repo.get_willingness_training_data()
+            validate_scoring_data(df, context="Willingness Scoring")
             scorer = WillingnessScorer(model_dir="models", cache_dir="data/cache")
             path = scorer.score(df)
             cache_paths["willingness"] = path
@@ -80,6 +84,7 @@ def run_scoring_steps(logger) -> dict:
         try:
             # Use repository to fetch data with date filter
             df = repo.get_ability_training_data()
+            validate_scoring_data(df, context="Ability Scoring")
             scorer = AbilityScorer(model_dir="models", cache_dir="data/cache")
             path = scorer.score(df)
             cache_paths["ability"] = path
@@ -101,6 +106,14 @@ def run_matrix_integration(logger, cache_paths: dict):
     
     if w_path and a_path:
         logger.info("Both scores available. Integrating...")
+        
+        # Quick validation on the Parquet files before integration
+        import polars as pl
+        df_w = pl.read_parquet(w_path)
+        df_a = pl.read_parquet(a_path)
+        validate_matrix_inputs(df_w, required_cols=["CUST_INFO_ID", "WILLINGNESS_SCORE"], context="Willingness Scores")
+        validate_matrix_inputs(df_a, required_cols=["CUST_INFO_ID", "ABILITY_SCORE"], context="Ability Scores")
+        
         engine = MatrixEngine()
         engine.integrate_and_save(w_path, a_path)
     else:

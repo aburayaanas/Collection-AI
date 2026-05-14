@@ -24,10 +24,13 @@ class OracleDatabase:
                 user=settings.DB_USER,
                 password=settings.DB_PASSWORD.get_secret_value(),
                 dsn=settings.DB_DSN,
-                min=2,
-                max=5,
+                min=settings.DB_MIN_POOL,
+                max=settings.DB_MAX_POOL,
                 increment=1,
                 getmode=oracledb.POOL_GETMODE_WAIT,
+            )
+            logger.info(
+                f"Pool config: min={settings.DB_MIN_POOL}, max={settings.DB_MAX_POOL}"
             )
             logger.info("Oracle Connection Pool initialized successfully (Thin Mode).")
         except oracledb.Error as e:

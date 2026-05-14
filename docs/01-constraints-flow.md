@@ -41,7 +41,9 @@ description: 'Pillar 1:  Willingness vs. Ability AI Model Architecture'
 
 ### Algorithm selection: LSTM or Hybrid XGBoost-LSTM
 
-* LSTM Rationale:  \
+* LSTM Rationale:
+  \
   Cashflow is inherently sequential; LSTM captures temporal dependencies(e.g., salary seasonality, spending cycles). Studies show LSTM outperforms ARIMA/SARIMAfor medium-term forecasting
-* Hybrid Approach:  \
+* Hybrid Approach:
+  \
   Use LSTM for 30-day rolling cashflow forecast → feed aggregatefeatures (e.g., predicted min balance, projected variance) into XGBoost alongside staticfeatures

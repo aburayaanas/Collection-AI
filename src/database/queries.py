@@ -1,8 +1,12 @@
 """
 This module is used to execute queries to the database.
 """
+import logging
+
 from src.database.connection import db
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 FEATURES_DIR = BASE_DIR / "database/features"
@@ -38,16 +42,20 @@ def get_query(query_name: str) -> str:
 
 def get_snap_date(inst_code: str, country_code: str) -> str:
     """
-    Fetches the last working day (DAY_DATE) for the specific institution using SNAP_DATE function.
+    Fetches the last working day (DAY_DATE) for the specific institution
+    using the Oracle SNAP_DATE function.
     
     Args:
         inst_code: Institution code (e.g., '1')
         country_code: Country code (e.g., '400')
         
     Returns:
-        Date or None if not found.
+        Date string in 'YYYY-MM-DD' format.
+        
+    Raises:
+        RuntimeError: If the SNAP_DATE function fails or returns no result.
+            The pipeline MUST NOT continue without a valid business date.
     """
-    # Use bind variables for safety - ensure date component only
     sql = "SELECT TO_CHAR(SNAP_DATE(:1, :2), 'YYYY-MM-DD') FROM DUAL"
     
     try:
@@ -57,9 +65,19 @@ def get_snap_date(inst_code: str, country_code: str) -> str:
             result = cursor.fetchone()
             
             if result and result[0]:
+                logger.info(f"SNAP_DATE resolved to: {result[0]}")
                 return result[0]
-            return None
+            
+            raise RuntimeError(
+                f"SNAP_DATE returned NULL for inst_code={inst_code}, "
+                f"country_code={country_code}. "
+                f"Verify the SNAP_DATE function and calendar data in the database."
+            )
+    except RuntimeError:
+        raise  # re-raise our own error as-is
     except Exception as e:
-        # Fallback for testing/dev if function doesn't exist
-        print(f"Warning: Failed to call SNAP_DATE: {e}")
-        return None
+        logger.error(f"Failed to call SNAP_DATE: {e}")
+        raise RuntimeError(
+            f"SNAP_DATE function call failed: {e}. "
+            f"Pipeline cannot continue without a valid business date."
+        ) from e

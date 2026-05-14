@@ -148,62 +148,23 @@ class WillingnessScorer:
         
         logger.info(f"Predictions generated. Score range: [{predictions.min():.4f}, {predictions.max():.4f}]")
         
-        # Cache to Parquet
-        cache_filename = f"willingness_scores_{datetime.now():%Y%m%d}.parquet"
+        # Cache to Parquet (include time to prevent same-day overwrites)
+        cache_filename = f"willingness_scores_{datetime.now():%Y%m%d_%H%M%S}.parquet"
         cache_path = self.cache_dir / cache_filename
+        
+        # Also maintain a "latest" symlink-style file for downstream consumers
+        latest_path = self.cache_dir / f"willingness_scores_{datetime.now():%Y%m%d}.parquet"
+        if latest_path.exists():
+            backup_path = latest_path.with_suffix(".parquet.bak")
+            logger.warning(f"Existing cache found. Backing up to: {backup_path.name}")
+            latest_path.rename(backup_path)
         
         logger.info(f"Caching results to: {cache_path}")
         result_df.write_parquet(cache_path)
         
+        # Write the "daily" file that matrix integration expects
+        result_df.write_parquet(latest_path)
+        
         logger.info(f"Scoring complete. Cached {result_df.height:,} predictions to Parquet")
         
         return str(cache_path)
-    
-    def generate_sql_skeleton(self, id_col: str = "CUST_INFO_ID") -> None:
-        """
-        Print a SQL MERGE skeleton for reference.
-        
-        This is a helper to show how the cached Parquet data could be
-        merged back into the database in a future pipeline stage.
-        
-        Args:
-            id_col: The ID column name used in the merge
-        """
-        sql_skeleton = f"""
--- SQL MERGE Skeleton (For Reference Only - Not Executed)
--- This shows how to merge the Parquet cache back to a database table
-
-MERGE INTO COLLECTION_SCORES target
-USING (
-    -- Load from external table or staging table populated from Parquet
-    SELECT 
-        {id_col},
-        WILLINGNESS_SCORE,
-        SYSDATE as SCORE_DATE
-    FROM WILLINGNESS_SCORES_STAGING
-) source
-ON (target.{id_col} = source.{id_col})
-WHEN MATCHED THEN
-    UPDATE SET
-        target.WILLINGNESS_SCORE = source.WILLINGNESS_SCORE,
-        target.SCORE_DATE = source.SCORE_DATE,
-        target.UPDATED_AT = SYSDATE
-WHEN NOT MATCHED THEN
-    INSERT ({id_col}, WILLINGNESS_SCORE, SCORE_DATE, CREATED_AT)
-    VALUES (source.{id_col}, source.WILLINGNESS_SCORE, source.SCORE_DATE, SYSDATE);
-
-COMMIT;
-
--- Notes:
--- 1. Load Parquet file to WILLINGNESS_SCORES_STAGING table first
--- 2. Adjust column names to match your schema
--- 3. Add any additional metadata columns as needed
-        """.strip()
-        
-        print("\n" + "=" * 80)
-        print("SQL MERGE SKELETON")
-        print("=" * 80)
-        print(sql_skeleton)
-        print("=" * 80 + "\n")
-        
-        logger.info("SQL skeleton printed to console")

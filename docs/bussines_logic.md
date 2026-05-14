@@ -1,45 +1,68 @@
-### TABLES/CLOUMNS DEFINTION
+# Business Logic Documentation
 
-PIO\_COLL.PIO\_PTP\_COLLECTOR: stores the promises of the customers and the status of the promises.
-PTP\_STATUS = 1: Kept, 2: Broken
+## Table and Column Definitions
 
+### PIO_COLL.PIO_PTP_COLLECTOR
+Stores customer promises (Promise-To-Pay) and their fulfillment status.
+- **PTP_STATUS**: 
+    - `1`: Kept
+    - `2`: Broken
 
+### PIO_COLL.PIO_CUSTOMERS_INFO
+The central fact table for customer information.
+- **ID**: Unique customer identifier used across all modules in the collection system. This is the primary key for identifying specific individuals.
 
-### general
+### PIO_ACCOUNT_DEALS_INFO
+The central fact table for customer accounts, containing all accounts associated with a customer.
 
-* account to use: most dpd account
-* PTO\_STATUS lookup -> PIO\_PTP\_STATUS
-* communication type lookup -> PIO\_COMMUNICATE\_TYPE thier is two of this table one under the PIO\_COLL schema and the other under BI\_DWH
+### PIO_COLL.PIO_CUST_TASK_ALLOCATED
+Contains customer task assignments.
+- **ID**: Unique identifier for the allocation record (linked to the customer).
+- **TASK_NO**: The task number representing the action to be performed (e.g., call, SMS, email). Tasks can change on a daily, weekly, or monthly basis. Once a task is completed, a new one may be assigned. 
+    - *Note: It is assumed that a customer has only one active task at any given time.*
+- **CUST_INFO_ID**: Customer information identifier (Usage details currently under investigation).
 
+### PIO_TASK_ACTIONS
+Records specific actions taken regarding a customer's assigned task.
+- **ID**: Primary key for the action record.
+- **CUST_TASK_ALLOC_ID**: Link to the task allocation record.
+- **ACTION_SEQ**: Sequence number corresponding to a predefined action defined in the `PIO_ACTIVITY_DEF` lookup table.
 
+### PIO_ACTIVITY_DEF
+Lookup table for task and activity definitions.
 
-### abu hamzeh answers
+---
 
-* Customer income will be constructed by the db team we dont have this info yet.
-* calls/sms/email etc -> Activity table its an actions job.
-* if a customer is deliquent but doesnt has a promise then you can find this information in the accounts table. under over due amount column.
-* all transactions for deliqunt customer under the colletion system is tranct\_coll\_info table.
-* to know configred values use this table -> PIO\_PTP\_PARAM\_DEF
+## General Logic Rules
 
+- **Joins**: Most tables in the collection module are joined using the `ID` (customer identifier).
+- **Account Selection**: When multiple accounts exist, the "Most DPD" (Days Past Due) account is typically used.
+- **Status Lookups**:
+    - `PTP_STATUS` is mapped using `PIO_PTP_STATUS`.
+    - Communication types are mapped using `PIO_COMMUNICATE_TYPE` (Note: This table exists in both the `PIO_COLL` schema and `BI_DWH`).
 
+---
 
+## Stakeholder Clarifications (Abu Hamzeh / Nadier / Meyad)
 
-### tables dictonary excel
-Their exist a table dictonary excel file for each modul in the company construted by indivals e.g. meyad for collection beacuse hes the one who built the collection system.
+- **Customer Income**: This data is currently being constructed by the DB team and is not yet available.
+- **Activity Tracking**: Actions such as calls, SMS, and emails are managed via the Activity/Actions logic.
+- **Delinquency Without Promise**: For delinquent customers without an active promise, information (such as overdue amounts) is retrieved from the accounts table.
+- **Transactions**: All transactions for delinquent customers are stored in the `TRANCT_COLL_INFO` table.
+- **Configurations**: System configured values can be found in `PIO_PTP_PARAM_DEF`.
+- **History Retention**: There is conflicting information regarding history; Nadier suggests the actions table is reset/deleted (no history), while Meyad suggests history is maintained.
 
-these files logic lies as the following:
-red  tables = core data from bank as is 
-blue tables = ones we created for actions(buttoms ) on oour interface
-info tables =  red 
-manual = blue
-collection = core logic of the collection system
+---
 
+## Table Dictionary & Classification
+A dictionary exists for each module (e.g., Meyad for Collection). The classification logic is as follows:
 
-### 
-most of the job basket logic lies under 2 tables:
-PIO_account_deals
-pio_customer_deals
+- **Red Tables**: Core data imported directly from the bank as-is.
+- **Blue Tables**: Internal tables created for system actions (buttons) on the interface.
+- **Info Tables**: Classified as Red (Core).
+- **Manual Tables**: Classified as Blue (Internal).
+- **Collection Tables**: Contain the core logic of the collection system.
 
-### notes
-nadier confirmed that any actions table get rest/deleted it doesn not hold history of actions
-while meyad confirmed the opposite 
+### Core Logic Tables:
+- `PIO_ACCOUNT_DEALS`
+- `PIO_CUSTOMER_DEALS`

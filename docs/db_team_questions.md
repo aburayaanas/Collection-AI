@@ -1,35 +1,77 @@
-###general questions
+# DB Team Questions & NBA Requirements Questionnaire
 
-- does the collection system logic lies behind account number or cus_num if account is their a specifc condition on it like most active account for this specifc customer? why beacuse a customer may have more than account which one should i pick? and how on which criteria?
+## General Data & Logic Questions
 
-TABLE: PIO_COLL.PIO_PTP_COLLECTOR
-- PTP_STATUS: is thier a lookup table for this column? what does each value mean? and what is their scope?
-- PTP_DATE, DAY_DATE: is PTP_DATE - DAY_DATE = number of days between the promise date and the day the customer made the promise? in no how can i achive this condition?
+### Account vs. Customer Logic
+- Does the collection system logic rely on the **Account Number** or the **Customer Number (CUS_NUM)**?
+- If it relies on the account number, are there specific selection criteria? For example, should we prioritize the most active account or the one with the highest DPD (Days Past Due)?
 
-TABLE: PIO_COLL.PIO_CONTACT_MANUAL_INFO
-- COMMUNICATION_TYPE: is thier a lookup table for this column? what does each value mean?
-- UPDATED_DATE: what does this column represent?
-- MODULE_TYPE: what does this column represent?
+---
 
-TABLE: PIO_INWARD_CENTRAL_TRANSFERS
-- how is this table structured? is it a granular table or aggregated? (1 record per transaction or aggregated?)
-- why cus_num is null, should i join it with PIO_CUSTOMERS table to get the cus_num?
-- if i want the customer whole cashflow for a ceratin period of time does this table contain all the information i need?
+## Table Specific Queries
 
+### PIO_COLL.PIO_PTP_COLLECTOR
+- **PTP_STATUS**: Is there a lookup table for this column? What do the specific values represent, and what is their functional scope?
+- **PTP_DATE & DAY_DATE**: Is the calculation `PTP_DATE - DAY_DATE` the correct way to determine the number of days between the date the promise was made and the promised payment date? If not, what is the recommended method?
 
-Questions:
-1. how to knwo is a cusotmer transactions is being declined due to insufficient funds or any other reason?
-(this will help me filling the SPENDING_STATS CTE in ability sql query).
-2.
+### PIO_COLL.PIO_CONTACT_MANUAL_INFO
+- **COMMUNICATION_TYPE**: Is there a lookup table for this column? What are the definitions for each value?
+- **UPDATED_DATE**: What specific event or change does this timestamp represent?
+- **MODULE_TYPE**: What does this column represent in the context of the system?
 
+### PIO_INWARD_CENTRAL_TRANSFERS
+- **Structure**: Is this table granular (one record per transaction) or aggregated?
+- **Customer Linking**: We have noticed `CUS_NUM` is often NULL. Should we join this with the `PIO_CUSTOMERS` table to retrieve the correct `CUS_NUM`?
+- **Cashflow Analysis**: Does this table provide a complete view of a customer's cashflow for a given period?
 
+### Transaction Analysis
+- How can we identify if a customer's transaction was declined specifically due to **insufficient funds** versus other reasons? (This is critical for the `SPENDING_STATS` CTE in the Ability SQL query).
 
-###=================================================================================
-### ask abuhamzeh/ nadier.
-- account to use: most dpd account
+---
 
-- PIO_CONTACT_MANUAL_INFO thier is no date column on when did we called him
+## Stakeholder Follow-ups (Abu Hamzeh / Nadier)
 
-- payment methods collection: how to know if a customer has paid his loan without doing a promiss, is their a table that stores the payment methods of the customers? and value and if its full or not?
+- **Account Selection**: Confirmed to use the account with the most DPD.
+- **Contact Timing**: The `PIO_CONTACT_MANUAL_INFO` table currently lacks a specific column for the exact call timestamp.
+- **Payment Tracking**: How do we identify customers who paid their loans without making a formal promise? Is there a table that stores payment methods, values, and whether the payment was full or partial?
+- **Query Validation**: Is joining `PIO_COLL.PIO_ACCOUNT_DEALS_INFO` with the `PTP` tables correct for the Willingness query?
 
-- is using PIO_COLL.PIO_ACCOUNT_DEALS_INFO with the willingness query is correct joined with the PTP tables.
+---
+
+## AI Next Best Action (NBA) Requirements
+
+### Context
+We have completed the AI Customer Segmentation Matrix (Willingness x Ability). The next phase is the **Next Best Action (NBA) Engine**, which will recommend the optimal channel and negotiation offer for each customer. To avoid incorrect assumptions, we require explicit definitions of the bank's current capabilities, compliance rules, and database tracking.
+
+### Category 1: Communication Channels (The "Action Space")
+We need to know which methods the AI is permitted to recommend and how they integrate with the database.
+- **Automated Channels**: Which digital channels are currently integrated (e.g., SMS, Email, Push Notifications, WhatsApp, IVR)?
+- **Human Channels**: How is a customer routed to a human agent (e.g., Standard Queue, VIP Queue, Legal, Field Visits)?
+- **Execution Mechanism**: How should the AI trigger these actions? Should we write recommendations to a daily queue table (e.g., `PIO_COLL_ACTION_QUEUE`) for your servers to consume?
+
+### Category 2: Treatment & Offer Library (The "Negotiation Space")
+What specific financial options is the AI allowed to offer to specific segments (e.g., Quadrant 2: "Willing but Broke")?
+- **Payment Plans (Restructuring)**: What are the standard installment lengths (e.g., 3, 6, or 12 months)?
+- **Settlements (Haircuts)**: Are we allowed to offer principal or interest reductions (e.g., waiving late fees)?
+- **Hardship Programs**: Are there flags for "Payment Holidays" or freezes?
+- **Eligibility Rules**: Are there strict rules on who receives specific offers (e.g., "Settlements only if DPD > 120")?
+
+### Category 3: Compliance & Contact Guardrails (The "Hard Limits")
+What are the hardcoded limits to prevent regulatory breaches or harassment?
+- **Anti-Harassment**: Maximum contact frequency (e.g., "Max 2 SMS/week, 1 Call/day").
+- **Blackout Periods**: Specific times or days when contact is forbidden (e.g., Fridays, Public Holidays, or 8 PM – 8 AM).
+- **Exclusion Segments**: Which statuses must never be contacted (e.g., Bankruptcy, Deceased, VIP, Litigation)? Where are these flags located?
+
+### Category 4: The Feedback Loop (The "Learning Mechanism")
+To enable Reinforcement Learning, we must track the outcomes of previous actions.
+- **Action Logging**: Which table/column records that an event occurred (e.g., `CONTACT_LOG.STATUS = 'DELIVERED'`)?
+- **Offer Acceptance**: How is a customer's response to an offer (Accepted, Rejected, Counter-offered) recorded?
+- **Promise Tracking**: Which table definitively tracks if a Promise-To-Pay (PTP) generated from an NBA was kept or broken?
+
+### Category 5: Architecture Output
+- **Destination Table**: We propose an output table `PIO_COLL_AI_NBA_ACTIONS` containing `CUST_INFO_ID`, `RECOMMENDED_CHANNEL`, `RECOMMENDED_OFFER`, `CONFIDENCE_SCORE`, and `REASON_CODES`. Does this align with your architecture?
+
+---
+
+### Additional Notes
+- **RPC Recency**: `DAYS_SINCE_LAST_RPC` currently only tracks calls; we may need permissions to incorporate other contact methods.

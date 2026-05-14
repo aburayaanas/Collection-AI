@@ -1,0 +1,196 @@
+{
+  "main": {
+    "id": "5bab4f7583ea247d",
+    "type": "split",
+    "children": [
+      {
+        "id": "65f50160dee05f91",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "2add36276780c815",
+            "type": "leaf",
+            "state": {
+              "type": "graph",
+              "state": {},
+              "icon": "lucide-git-fork",
+              "title": "Graph view"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "6cd8b600c9d96432",
+    "type": "split",
+    "children": [
+      {
+        "id": "7723465494d84c6b",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "910a5d567ad13665",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "7727baf90983f4b2",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "65d9754d6ba04a1a",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {},
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "ff2ff712b1cac27b",
+    "type": "split",
+    "children": [
+      {
+        "id": "2a6d3b9e74bfe60f",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "617bcf4059564adf",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "01-architechture-flow.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks for 01-architechture-flow"
+            }
+          },
+          {
+            "id": "8ebba78021ac7be6",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "01-architechture-flow.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links from 01-architechture-flow"
+            }
+          },
+          {
+            "id": "311fffba135c5f45",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "d826636bbd32d81e",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "537cb442f3882a08",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "01-architechture-flow.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline of 01-architechture-flow"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "2add36276780c815",
+  "lastOpenFiles": [
+    "01-constraints-flow.md",
+    "01-architechture-flow.md",
+    "2026-03-09.md",
+    "Collection Mapping Checklist/~$Bank-BPM PIO_MEMO_NOTES_INFO Mapping Checklist.xlsx",
+    "02-constraints-flow.md",
+    "Team/laith/shap/Screenshot 2026-02-19 165827.png",
+    "links.md",
+    "bussines_logic.md",
+    "db_team_questions.md",
+    "Notes.md",
+    "README.md"
+  ]
+}
