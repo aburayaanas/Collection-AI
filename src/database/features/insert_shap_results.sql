@@ -3,7 +3,6 @@
 -- Target: openbi2 DWH, BI_DWH schema
 --
 -- Called from src/database/shap_repository.py via executemany.
--- Called from src/database/shap_repository.py via executemany.
 -- Column mapping (Named Parameters):
 --   :cust_id           → CUST_INFO_ID
 --   :model_type        → SHAP_MODEL_TYPE

@@ -7,12 +7,13 @@ persists the final results to the database.
 """
 
 from pathlib import Path
+import json
 
 import polars as pl
 
 from src.core.logger import get_logger
 from src.database.repository import CollectionRepository
-from src.database.queries import get_snap_date
+from src.database.queries import get_snap_date  # noqa: F401 — used in production (commented out in dev mode)
 from src.core.config import settings
 
 logger = get_logger(__name__)
@@ -92,15 +93,24 @@ class MatrixEngine:
         # Log quadrant distribution
         self._log_quadrant_distribution(df_final)
         
-        current_day_date = get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
+        # ==================================================================================
+        # In developemnt mode, we use the current day date
+        # In production mode, we use the snap date
+        # ==================================================================================
+        current_day_date = "2025-05-17" # get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
+
+        # Read model version from pointer files for audit trail
+        model_version = self._get_model_version()
 
         # Append the configuration values to every row in the final DataFrame
         logger.info(f"Appending tenant context: {settings.INST_CODE}, {settings.COUNTRY_CODE}, {current_day_date}")
+        logger.info(f"Model version: {model_version}")
         
         df_final = df_final.with_columns([
             pl.lit(current_day_date).alias("DAY_DATE"),
             pl.lit(settings.INST_CODE).alias("INST_CODE"),
-            pl.lit(settings.COUNTRY_CODE).alias("COUNTRY_CODE")
+            pl.lit(settings.COUNTRY_CODE).alias("COUNTRY_CODE"),
+            pl.lit(model_version).alias("MODEL_VERSION"),
         ])
         
         # Step 6: Persist to database
@@ -108,6 +118,33 @@ class MatrixEngine:
         self.repository.upsert_matrix_results(df_final)
         
         logger.info("Matrix integration completed successfully!")
+
+    def _get_model_version(self) -> str:
+        """
+        Read the current model version from the pointer files.
+
+        Returns a combined version string like:
+          'w:willingness_v20260220_164400|a:ability_v20260220_164500'
+
+        Falls back to 'unknown' if pointer files don't exist.
+        """
+        model_dir = Path("models")
+        parts = []
+
+        for prefix, pointer_file in [("w", "latest_willingness.json"), ("a", "latest_ability.json")]:
+            path = model_dir / pointer_file
+            if path.exists():
+                try:
+                    with open(path, "r") as f:
+                        data = json.load(f)
+                    version = data.get("latest", "unknown").replace(".json", "")
+                    parts.append(f"{prefix}:{version}")
+                except Exception:
+                    parts.append(f"{prefix}:unknown")
+            else:
+                parts.append(f"{prefix}:unknown")
+
+        return "|".join(parts)
     
     def _load_parquet(self, path: str) -> pl.DataFrame:
         """

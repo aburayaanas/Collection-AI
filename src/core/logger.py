@@ -4,18 +4,24 @@ Provides structured, production-ready logging for the Collection AI batch job.
 """
 
 import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from pathlib import Path
 from src.core.config import settings
 
+# ── Log Rotation Settings ────────────────────────────────────────────
+LOG_MAX_BYTES = 10 * 1024 * 1024   # 10 MB per file
+LOG_BACKUP_COUNT = 5                # keep 5 rotated files (50 MB total max)
+
 
 def setup_logging() -> logging.Logger:
     """
-    Configures application-wide logging with both console and file handlers.
+    Configures application-wide logging with both console and rotating file handlers.
     
     Features:
-    - Daily rotating log files with ISO date format
-    - Dual output: console + file
+    - Rotating log files (10 MB max, 5 backups = 50 MB ceiling)
+    - Daily file naming with ISO date format
+    - Dual output: console + rotating file
     - Debug mode support via settings.DEBUG
     - Professional formatting with timestamps
     
@@ -53,8 +59,13 @@ def setup_logging() -> logging.Logger:
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
     
-    # === File Handler ===
-    file_handler = logging.FileHandler(log_file, encoding="utf-8")
+    # === Rotating File Handler (prevents unbounded log growth) ===
+    file_handler = RotatingFileHandler(
+        log_file,
+        maxBytes=LOG_MAX_BYTES,
+        backupCount=LOG_BACKUP_COUNT,
+        encoding="utf-8",
+    )
     file_handler.setLevel(log_level)
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)

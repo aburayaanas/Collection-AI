@@ -179,12 +179,13 @@ class CollectionRepository:
             "WILLINGNESS_SCORE",
             "ABILITY_SCORE",
             "NBA_PRIORITY",
-            "CURRENT_QUADRANT"
+            "CURRENT_QUADRANT",
+            "MODEL_VERSION"
         ]).to_dicts()
         
         # Corrected MERGE SQL statement matching your actual schema
         merge_sql = """
-                MERGE INTO PIO_COLL_AI_MATRIX_RESULTS c
+                MERGE INTO BI_DWH.PIO_COLL_AI_MATRIX_RESULTS c
                 USING dual ON (
                     c.DAY_DATE = TO_DATE(:DAY_DATE, 'YYYY-MM-DD') AND
                     c.INST_CODE = :INST_CODE AND
@@ -197,6 +198,7 @@ class CollectionRepository:
                         ABILITY_SCORE = :ABILITY_SCORE,
                         PRIORITY_SCORE = :NBA_PRIORITY,
                         CURRENT_QUADRANT = :CURRENT_QUADRANT,
+                        MODEL_VERSION = :MODEL_VERSION,
                         LAST_SCORED_AT = CURRENT_TIMESTAMP
                 WHEN NOT MATCHED THEN
                     INSERT (
@@ -207,7 +209,8 @@ class CollectionRepository:
                         WILLINGNESS_SCORE, 
                         ABILITY_SCORE, 
                         PRIORITY_SCORE, 
-                        CURRENT_QUADRANT, 
+                        CURRENT_QUADRANT,
+                        MODEL_VERSION,
                         LAST_SCORED_AT
                     )
                     VALUES (
@@ -218,7 +221,8 @@ class CollectionRepository:
                         :WILLINGNESS_SCORE, 
                         :ABILITY_SCORE, 
                         :NBA_PRIORITY, 
-                        :CURRENT_QUADRANT, 
+                        :CURRENT_QUADRANT,
+                        :MODEL_VERSION,
                         CURRENT_TIMESTAMP
                     )
                 """
