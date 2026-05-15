@@ -160,7 +160,63 @@ class CollectionRepository:
         logger.info("Applied null-filling for numeric features")
         
         return df
-    
+
+    def get_nba_context_data(self) -> pl.DataFrame:
+        """Fetch NBA operational context from PIO_COLL_AI_NBA_CONTEXT_MART.
+
+        This mart is fully isolated from the ML feature marts. It holds
+        operational state (account status, contact frequency, outstanding
+        balance) that drives guardrail decisions — not model predictions.
+
+        Returns:
+            Polars DataFrame with columns:
+                CUST_INFO_ID, ACCOUNT_STATUS, TOTAL_DUE,
+                SMS_SENT_THIS_WEEK, CALLS_MADE_TODAY.
+
+        Raises:
+            Exception: If query execution or data conversion fails.
+        """
+        logger.info("Fetching NBA context data from PIO_COLL_AI_NBA_CONTEXT_MART...")
+
+        snap_date = get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
+        if not snap_date:
+            raise ValueError("Snapshot date retrieval failed")
+
+        sql = get_query("nba_context")
+
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, {
+                'day_date': snap_date,
+                'inst_code': settings.INST_CODE,
+                'country_code': settings.COUNTRY_CODE,
+            })
+            rows = cursor.fetchall()
+            cursor.close()
+
+        logger.info(f"Retrieved {len(rows):,} NBA context records")
+
+        schema = {
+            "CUST_INFO_ID":       pl.String,
+            "ACCOUNT_STATUS":     pl.String,
+            "TOTAL_DUE":          pl.Float64,
+            "SMS_SENT_THIS_WEEK": pl.Int64,
+            "CALLS_MADE_TODAY":   pl.Int64,
+        }
+
+        df = pl.DataFrame(rows, schema=schema, orient="row")
+
+        # Safe defaults: nulls must never reach the guardrail engine
+        df = df.with_columns([
+            pl.col("ACCOUNT_STATUS").fill_null("Active"),
+            pl.col("TOTAL_DUE").fill_null(0.0),
+            pl.col("SMS_SENT_THIS_WEEK").fill_null(0),
+            pl.col("CALLS_MADE_TODAY").fill_null(0),
+        ])
+
+        logger.info(f"NBA context DataFrame: {df.shape[0]:,} rows x {df.shape[1]} columns")
+        return df
+
     def upsert_matrix_results(self, df: pl.DataFrame) -> None:
         """
         Bulk upsert matrix results into PIO_COLL_AI_MATRIX_RESULTS table.
@@ -246,6 +302,102 @@ class CollectionRepository:
             except Exception as e:
                 conn.rollback()
                 logger.error(f"Failed to upsert matrix results: {e}")
+                raise
+            finally:
+                cursor.close()
+
+    def upsert_nba_results(self, df: pl.DataFrame) -> None:
+        """Bulk upsert NBA action recommendations into PIO_COLL_AI_NBA_ACTIONS.
+
+        Persists the output DataFrame produced by ``NBAOrchestrator.process_batch()``
+        into the Oracle table that feeds the agent desktop worklist. Uses a
+        MERGE so re-running the nightly job is idempotent.
+
+        Args:
+            df (pl.DataFrame): Output DataFrame from ``NBAOrchestrator.process_batch()``.
+                Must contain columns: ``CUST_INFO_ID``, ``DAY_DATE``,
+                ``INST_CODE``, ``COUNTRY_CODE``, ``RECOMMENDED_CHANNEL``,
+                ``RECOMMENDED_OFFER``, ``REASON_CODE``.
+
+        Raises:
+            Exception: Re-raised after rollback if the entire batch fails
+                at the connection/cursor level. Row-level failures are
+                logged as warnings and do not raise.
+        """
+        logger.info(f"Upserting {df.height:,} NBA action results to database...")
+
+        records = df.select([
+            "DAY_DATE",
+            "INST_CODE",
+            "COUNTRY_CODE",
+            "CUST_INFO_ID",
+            "RECOMMENDED_CHANNEL",
+            "RECOMMENDED_OFFER",
+            "REASON_CODE",
+        ]).to_dicts()
+
+        merge_sql = """
+            MERGE INTO BI_DWH.PIO_COLL_AI_NBA_ACTIONS t
+            USING dual ON (
+                t.CUST_INFO_ID   = :CUST_INFO_ID AND
+                t.DAY_DATE       = TO_DATE(:DAY_DATE, 'YYYY-MM-DD') AND
+                t.INST_CODE      = :INST_CODE AND
+                t.COUNTRY_CODE   = :COUNTRY_CODE
+            )
+            WHEN MATCHED THEN
+                UPDATE SET
+                    RECOMMENDED_CHANNEL = :RECOMMENDED_CHANNEL,
+                    RECOMMENDED_OFFER   = :RECOMMENDED_OFFER,
+                    REASON_CODE         = :REASON_CODE,
+                    UPDATED_AT          = CURRENT_TIMESTAMP
+            WHEN NOT MATCHED THEN
+                INSERT (
+                    DAY_DATE,
+                    INST_CODE,
+                    COUNTRY_CODE,
+                    CUST_INFO_ID,
+                    RECOMMENDED_CHANNEL,
+                    RECOMMENDED_OFFER,
+                    REASON_CODE,
+                    CREATED_AT,
+                    UPDATED_AT
+                )
+                VALUES (
+                    TO_DATE(:DAY_DATE, 'YYYY-MM-DD'),
+                    :INST_CODE,
+                    :COUNTRY_CODE,
+                    :CUST_INFO_ID,
+                    :RECOMMENDED_CHANNEL,
+                    :RECOMMENDED_OFFER,
+                    :REASON_CODE,
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                )
+        """
+
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.executemany(merge_sql, records, batcherrors=True)
+
+                errors = cursor.getbatcherrors()
+                if errors:
+                    logger.warning(
+                        f"Encountered {len(errors)} batch errors during NBA upsert"
+                    )
+                    for error in errors[:10]:
+                        logger.warning(f"  Row {error.offset}: {error.message}")
+
+                conn.commit()
+                successful = df.height - len(errors)
+                logger.info(
+                    f"Successfully upserted {successful:,} records "
+                    f"to PIO_COLL_AI_NBA_ACTIONS"
+                )
+
+            except Exception as e:
+                conn.rollback()
+                logger.error(f"Failed to upsert NBA results: {e}")
                 raise
             finally:
                 cursor.close()

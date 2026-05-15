@@ -147,6 +147,39 @@ class ShapResultsRepository:
         with db.get_connection() as conn:
             cursor = conn.cursor()
             try:
+                # ── Diagnostic: compare WHERE values before first batch ───
+                sample_id = records[0]["cust_id"]
+                cursor.execute(
+                    "SELECT CUST_INFO_ID, "
+                    "TO_CHAR(TRUNC(DAY_DATE), 'YYYY-MM-DD') AS DAY_DATE, "
+                    "INST_CODE, COUNTRY_CODE "
+                    "FROM BI_DWH.PIO_COLL_AI_MATRIX_RESULTS "
+                    "WHERE CUST_INFO_ID = :1 AND ROWNUM = 1",
+                    [sample_id]
+                )
+                row = cursor.fetchone()
+                if row:
+                    logger.info(
+                        f"[SHAP WHERE DIAGNOSTIC]\n"
+                        f"  DB row found for CUST_INFO_ID={sample_id}:\n"
+                        f"    DB  DAY_DATE    = '{row[1]}'\n"
+                        f"    DB  INST_CODE   = {row[2]!r}\n"
+                        f"    DB  COUNTRY_CODE= {row[3]!r}\n"
+                        f"  SHAP is sending:\n"
+                        f"    IN  snap_date   = '{snap_date}'\n"
+                        f"    IN  inst_code   = {inst_code_val!r}\n"
+                        f"    IN  country_code= {country_code_val!r}\n"
+                        f"  Match: DAY_DATE={row[1]==snap_date}, "
+                        f"INST={str(row[2])==str(inst_code_val)}, "
+                        f"COUNTRY={str(row[3])==str(country_code_val)}"
+                    )
+                else:
+                    logger.warning(
+                        f"[SHAP WHERE DIAGNOSTIC] No row found in "
+                        f"PIO_COLL_AI_MATRIX_RESULTS for CUST_INFO_ID={sample_id}. "
+                        f"Matrix results may not have been committed yet."
+                    )
+
                 for start in range(0, len(records), self.batch_size):
                     batch = records[start : start + self.batch_size]
 
@@ -158,6 +191,16 @@ class ShapResultsRepository:
                     batch_ok = len(batch) - len(errors)
                     total_success += batch_ok
                     total_errors += len(errors)
+
+                    # Warn if no rows were actually matched (silent mismatch)
+                    if cursor.rowcount == 0 and batch_ok > 0:
+                        logger.warning(
+                            f"Batch [{start}:{start + len(batch)}]: "
+                            f"0 rows updated — DAY_DATE/INST_CODE/COUNTRY_CODE "
+                            f"may not match records in PIO_COLL_AI_MATRIX_RESULTS. "
+                            f"snap_date={snap_date}, inst={inst_code_val}, "
+                            f"country={country_code_val}"
+                        )
 
                     if errors:
                         logger.warning(

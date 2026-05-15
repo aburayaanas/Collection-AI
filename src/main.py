@@ -6,6 +6,7 @@ from src.core.taxonomy import ErrorAdvisor
 from src.core.config import settings
 from src.core.validation import validate_training_data, validate_scoring_data, validate_matrix_inputs
 from src.database.repository import CollectionRepository
+import polars as pl
 
 # ── Modular Pipeline Steps ──────────────────────────────────────────
 
@@ -95,8 +96,13 @@ def run_scoring_steps(logger) -> dict:
             
     return cache_paths
 
-def run_matrix_integration(logger, cache_paths: dict):
-    """Execute matrix integration if both scores are available."""
+def run_matrix_integration(logger, cache_paths: dict) -> pl.DataFrame | None:
+    """Execute matrix integration if both scores are available.
+
+    Returns:
+        pl.DataFrame | None: The fully enriched matrix DataFrame returned
+            by MatrixEngine, or None if integration was skipped.
+    """
     from src.engine.matrix import MatrixEngine
     
     logger.info("=== MATRIX INTEGRATION PHASE ===")
@@ -108,16 +114,108 @@ def run_matrix_integration(logger, cache_paths: dict):
         logger.info("Both scores available. Integrating...")
         
         # Quick validation on the Parquet files before integration
-        import polars as pl
         df_w = pl.read_parquet(w_path)
         df_a = pl.read_parquet(a_path)
         validate_matrix_inputs(df_w, required_cols=["CUST_INFO_ID", "WILLINGNESS_SCORE"], context="Willingness Scores")
         validate_matrix_inputs(df_a, required_cols=["CUST_INFO_ID", "ABILITY_SCORE"], context="Ability Scores")
         
         engine = MatrixEngine()
-        engine.integrate_and_save(w_path, a_path)
+        return engine.integrate_and_save(w_path, a_path)
     else:
         logger.warning("Skipping Matrix Integration: Missing one or both score files (Check MODEL_SCOPE).")
+        return None
+
+
+def run_nba_steps(logger, matrix_df: pl.DataFrame | None) -> None:
+    """Execute the NBA engine on the matrix output and persist recommendations.
+
+    Isolated from the outer try/except in main() so a NBA failure never
+    rolls back or corrupts the already-committed Matrix results.
+
+    Args:
+        logger: Pipeline logger instance.
+        matrix_df (pl.DataFrame | None): Enriched matrix DataFrame returned
+            by run_matrix_integration(). If None, this step is skipped.
+    """
+    from src.engine.nba.orchestrator import NBAOrchestrator
+
+    logger.info("=== NBA PHASE ===")
+
+    if matrix_df is None or matrix_df.height == 0:
+        logger.warning("NBA phase skipped: no matrix output available.")
+        return
+
+    repo = CollectionRepository()
+
+    # ── Step 1: Convert quadrant int → string ────────────────────────
+    # CURRENT_QUADRANT is stored as int (1-4) in the matrix output;
+    # CustomerState expects the string literal "Q1"–"Q4".
+    df_matrix = matrix_df.with_columns(
+        (pl.lit("Q") + pl.col("CURRENT_QUADRANT").cast(pl.Utf8)).alias("CURRENT_QUADRANT")
+    )
+
+    # ── Step 2: Fetch NBA context from the dedicated context mart ─────
+    # Completely isolated from the ML feature marts. The DB team fills
+    # PIO_COLL_AI_NBA_CONTEXT_MART daily from source systems.
+    # In development, the seed script populates it.
+    try:
+        df_context = repo.get_nba_context_data()
+    except Exception as ctx_exc:
+        logger.warning(
+            f"Could not fetch NBA context mart: {ctx_exc}. "
+            f"Proceeding with safe defaults (guardrail ceilings will not fire)."
+        )
+        # Build an empty context frame so the left join degrades gracefully
+        df_context = pl.DataFrame(schema={
+            "CUST_INFO_ID":       pl.String,
+            "ACCOUNT_STATUS":     pl.String,
+            "TOTAL_DUE":          pl.Float64,
+            "SMS_SENT_THIS_WEEK": pl.Int64,
+            "CALLS_MADE_TODAY":   pl.Int64,
+        })
+
+    # ── Step 3: Join context onto matrix (left join — matrix is leading) ─
+    # Customers missing from the context mart get safe defaults:
+    #   ACCOUNT_STATUS = "Active" (no exclusion fires)
+    #   TOTAL_DUE = 0 (field-visit / dunning blocked — conservative)
+    #   SMS/CALLS = 0 (no frequency caps fire)
+    df_nba_input = df_matrix.join(df_context, on="CUST_INFO_ID", how="left").with_columns([
+        pl.col("ACCOUNT_STATUS").fill_null("Active"),
+        pl.col("TOTAL_DUE").fill_null(0.0),
+        pl.col("SMS_SENT_THIS_WEEK").fill_null(0),
+        pl.col("CALLS_MADE_TODAY").fill_null(0),
+    ])
+
+    logger.info(
+        f"NBA input prepared | {df_nba_input.height:,} customers | "
+        f"context_matched={df_context.height:,}"
+    )
+
+    # ── Run the orchestrator ──────────────────────────────────────────
+    orchestrator = NBAOrchestrator()
+    df_nba_output = orchestrator.process_batch(df_nba_input)
+
+    # ── Add tenant + date context required by the DB MERGE ───────────
+    day_date = matrix_df["DAY_DATE"][0]
+    df_nba_output = df_nba_output.with_columns([
+        pl.lit(day_date).alias("DAY_DATE"),
+        pl.lit(settings.INST_CODE).alias("INST_CODE"),
+        pl.lit(settings.COUNTRY_CODE).alias("COUNTRY_CODE"),
+    ])
+
+    # ── Log summary ───────────────────────────────────────────────────
+    total = df_nba_output.height
+    error_rows = df_nba_output.filter(
+        pl.col("REASON_CODE").str.starts_with("ERROR:")
+    ).height
+    logger.info(
+        f"NBA results | total={total:,}, "
+        f"success={total - error_rows:,}, errors={error_rows:,}"
+    )
+
+    # ── Persist ───────────────────────────────────────────────────────
+    repo.upsert_nba_results(df_nba_output)
+
 
 def run_shap_steps(logger):
     """Execute SHAP explanations for configured scopes (Reads from DB/Cache re-scoring)."""
@@ -205,10 +303,18 @@ def main():
             cache_paths = run_scoring_steps(logger)
             
             # B. Matrix Integration (ONLY if both are trained/scored)
-            run_matrix_integration(logger, cache_paths)
+            matrix_df = run_matrix_integration(logger, cache_paths)
             
             # C. SHAP (After Matrix, so rows exist for UPDATE)
             run_shap_steps(logger)
+
+            # D. NBA (After Matrix; isolated so failure doesn't corrupt Matrix)
+            try:
+                run_nba_steps(logger, matrix_df)
+            except Exception as nba_exc:
+                logger.error(
+                    f"NBA phase failed — Matrix results are safe: {nba_exc}"
+                )
             
     except Exception as e:
         diagnostic = ErrorAdvisor.analyze(e)

@@ -2,6 +2,7 @@
 This module is used to execute queries to the database.
 """
 import logging
+from datetime import datetime
 
 from src.database.connection import db
 from pathlib import Path
@@ -56,6 +57,12 @@ def get_snap_date(inst_code: str, country_code: str) -> str:
         RuntimeError: If the SNAP_DATE function fails or returns no result.
             The pipeline MUST NOT continue without a valid business date.
     """
+    # Force today's date for dev testing
+    today = datetime.now().strftime('%Y-%m-%d')
+    logger.info(f"DEV MODE: Using today's date for snapshot: {today}")
+    return today
+
+    # Original Production Logic:
     sql = "SELECT TO_CHAR(SNAP_DATE(:1, :2), 'YYYY-MM-DD') FROM DUAL"
     
     try:

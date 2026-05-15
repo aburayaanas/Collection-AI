@@ -70,7 +70,13 @@ class WillingnessTrainer:
             logger.info(f"Target engineering complete. Dataset size: {df_labeled.height:,} rows")
 
             # Step 2: Prepare features
-            exclude_cols = {"IS_WILLING", "CUST_INFO_ID", "SNAPSHOT_DATE", "TARGET_WILLINGNESS"}
+            # NBA context columns live in this mart for the DB team's convenience
+            # but are NOT behavioral predictors — exclude them from XGBoost features.
+            exclude_cols = {
+                "IS_WILLING", "CUST_INFO_ID", "SNAPSHOT_DATE", "TARGET_WILLINGNESS",
+                # NBA operational state columns (non-predictive for willingness)
+                "ACCOUNT_STATUS", "TOTAL_DUE", "SMS_SENT_THIS_WEEK", "CALLS_MADE_TODAY",
+            }
             feature_cols = [col for col in df_labeled.columns if col not in exclude_cols]
 
             logger.info(f"Training with {len(feature_cols)} features: {feature_cols}")

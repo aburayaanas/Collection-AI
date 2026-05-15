@@ -34,7 +34,7 @@ class MatrixEngine:
         """Initialize the matrix engine with repository connection."""
         self.repository = CollectionRepository()
         
-    def integrate_and_save(self, willingness_path: str, ability_path: str) -> None:
+    def integrate_and_save(self, willingness_path: str, ability_path: str) -> pl.DataFrame:
         """
         Integrate willingness and ability scores, then persist to database.
         
@@ -49,6 +49,14 @@ class MatrixEngine:
             willingness_path: Path to willingness scores Parquet file
             ability_path: Path to ability scores Parquet file
             
+        Returns:
+            pl.DataFrame: The fully enriched matrix DataFrame (with
+                CUST_INFO_ID, WILLINGNESS_SCORE, ABILITY_SCORE,
+                NBA_PRIORITY, CURRENT_QUADRANT, DAY_DATE, INST_CODE,
+                COUNTRY_CODE, MODEL_VERSION). Returned so callers can
+                pipe it directly into the NBA step without re-reading
+                from the database.
+
         Raises:
             FileNotFoundError: If either Parquet file doesn't exist
         """
@@ -94,10 +102,10 @@ class MatrixEngine:
         self._log_quadrant_distribution(df_final)
         
         # ==================================================================================
-        # In developemnt mode, we use the current day date
-        # In production mode, we use the snap date
+        # Both Matrix and SHAP now use get_snap_date() to ensure synchronization.
+        # In DEV: Returns today's date (2026).
         # ==================================================================================
-        current_day_date = "2025-05-17" # get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
+        current_day_date = get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
 
         # Read model version from pointer files for audit trail
         model_version = self._get_model_version()
@@ -118,6 +126,7 @@ class MatrixEngine:
         self.repository.upsert_matrix_results(df_final)
         
         logger.info("Matrix integration completed successfully!")
+        return df_final
 
     def _get_model_version(self) -> str:
         """

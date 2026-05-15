@@ -22,6 +22,6 @@ SET
     SHAP_COMPUTED_DATE = SYSDATE
 WHERE
     CUST_INFO_ID = :cust_id
-    AND DAY_DATE = TO_DATE(:snap_date, 'YYYY-MM-DD')
+    AND TRUNC(DAY_DATE) = TO_DATE(:snap_date, 'YYYY-MM-DD')
     AND INST_CODE = :inst_code
     AND COUNTRY_CODE = :country_code

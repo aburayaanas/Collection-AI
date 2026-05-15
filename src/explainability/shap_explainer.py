@@ -428,8 +428,15 @@ class CollectionShapExplainer:
             "IS_WILLING",
             "IS_STABLE",
             "SNAPSHOT_DATE",
+            "DAY_DATE",
+            "INST_CODE",
+            "COUNTRY_CODE",
             "TARGET_WILLINGNESS",
             "TARGET_ABILITY",
+            "ACCOUNT_STATUS",
+            "TOTAL_DUE",
+            "SMS_SENT_THIS_WEEK",
+            "CALLS_MADE_TODAY",
             "row_idx",
         }
         if exclude_cols:

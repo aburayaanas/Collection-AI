@@ -222,7 +222,7 @@ def validate_scoring_data(
         )
 
     logger.info(
-        f"[{context}] ✅ Scoring validation passed: {df.height:,} rows"
+        f"[{context}] Scoring validation passed: {df.height:,} rows"
     )
 
 
