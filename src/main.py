@@ -167,11 +167,27 @@ def run_nba_steps(logger, matrix_df: pl.DataFrame | None) -> None:
         )
         # Build an empty context frame so the left join degrades gracefully
         df_context = pl.DataFrame(schema={
-            "CUST_INFO_ID":       pl.String,
-            "ACCOUNT_STATUS":     pl.String,
-            "TOTAL_DUE":          pl.Float64,
-            "SMS_SENT_THIS_WEEK": pl.Int64,
-            "CALLS_MADE_TODAY":   pl.Int64,
+            "CUST_INFO_ID":               pl.String,
+            "ACCOUNT_STATUS":             pl.String,
+            "TOTAL_DUE":                  pl.Float64,
+            "SMS_SENT_THIS_WEEK":         pl.Int64,
+            "CALLS_MADE_TODAY":           pl.Int64,
+            "FULL_LEGAL_NAME":            pl.String,
+            "CUSTOMER_SEGMENT":           pl.String,
+            "NATIONALITY_RESIDENCY":      pl.String,
+            "EMPLOYER_NAME":              pl.String,
+            "VERIFIED_INCOME_JOD":         pl.Float64,
+            "INCOME_LAST_VERIFIED_DATE":  pl.Datetime,
+            "AML_LAST_SCREENED_DATE":     pl.Datetime,
+            "ACCOUNT_OPEN_DATE":          pl.Datetime,
+            "PRODUCTS_HELD":              pl.String,
+            "PRIMARY_PHONE":              pl.String,
+            "SCORE_DELTA_90D":            pl.Int64,
+            "COMPOSITE_RISK_SCORE":       pl.Int64,
+            "DAYS_PAST_DUE":              pl.Int64,
+            "CLASSIFICATION_PROBABILITIES": pl.Utf8,
+            "PAYMENT_REJECTION_FREQ": pl.Int64,
+            "CONTACT_AVOIDANCE_INDEX": pl.Float64
         })
 
     # ── Step 3: Join context onto matrix (left join — matrix is leading) ─
@@ -185,6 +201,43 @@ def run_nba_steps(logger, matrix_df: pl.DataFrame | None) -> None:
         pl.col("SMS_SENT_THIS_WEEK").fill_null(0),
         pl.col("CALLS_MADE_TODAY").fill_null(0),
     ])
+
+    # ── Step 3.2: Join raw ML features needed for Behavioral Signals ──
+    try:
+        df_w_features = repo.get_willingness_training_data().select([
+            "CUST_INFO_ID", "DAYS_SINCE_LAST_RPC", "BROKEN_PTP_COUNT_6M"
+        ])
+        df_nba_input = df_nba_input.join(df_w_features, on="CUST_INFO_ID", how="left")
+    except Exception as w_exc:
+        logger.warning(f"Could not join willingness features for behavioral signals: {w_exc}")
+        df_nba_input = df_nba_input.with_columns([
+            pl.lit(0).alias("DAYS_SINCE_LAST_RPC"),
+            pl.lit(0).alias("BROKEN_PTP_COUNT_6M")
+        ])
+
+    try:
+        df_a_features = repo.get_ability_training_data().select([
+            "CUST_INFO_ID", "INFLOW_VARIANCE_30D"
+        ])
+        df_nba_input = df_nba_input.join(df_a_features, on="CUST_INFO_ID", how="left")
+    except Exception as a_exc:
+        logger.warning(f"Could not join ability features for behavioral signals: {a_exc}")
+        df_nba_input = df_nba_input.with_columns([
+            pl.lit(0.0).alias("INFLOW_VARIANCE_30D")
+        ])
+
+    # ── Step 3.5: Join SHAP JSONs for Lazy-Loading Payload ─────────────
+    try:
+        df_shap = repo.get_shap_results()
+        df_nba_input = df_nba_input.join(df_shap, on="CUST_INFO_ID", how="left")
+    except Exception as shap_exc:
+        logger.warning(f"Could not fetch SHAP results for payload: {shap_exc}")
+        df_nba_input = df_nba_input.with_columns([
+            pl.lit(None).alias("WILL_RISK_DRIVERS"),
+            pl.lit(None).alias("WILL_POSITIVE_DRIVERS"),
+            pl.lit(None).alias("ABIL_RISK_DRIVERS"),
+            pl.lit(None).alias("ABIL_POSITIVE_DRIVERS"),
+        ])
 
     logger.info(
         f"NBA input prepared | {df_nba_input.height:,} customers | "

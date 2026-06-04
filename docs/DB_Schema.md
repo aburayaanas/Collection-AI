@@ -118,6 +118,49 @@ CREATE TABLE PIO_COLL_AI_WILLINGNESS_MART (
 | `BOUNCE_RATE_60D`        | NSF Rate                            | `Count(NSF) / Count(Total_Attempts)` over last 60 days.                                            |
 | `TARGET_WILLINGNESS`     | **LABEL** (Ground Truth)      | **1** if Silent Pay OR Promise Kept OR Restructure in 7 days AFTER snapshot. Else **0**. |
 
+## Reinforcement Learning Feedback Table (`PIO_COLL_AI_RL_FEEDBACK`)
+
+Captures the final agent action and customer outcome to calculate the Bandit Reward Score for continuous model training.
+
+```sql
+CREATE TABLE PIO_COLL_AI_RL_FEEDBACK (
+    DAY_DATE                DATE            NOT NULL,
+    INST_CODE               VARCHAR2(10)    NOT NULL,
+    COUNTRY_CODE            VARCHAR2(10)    NOT NULL,
+    CUST_INFO_ID            VARCHAR2(50)    NOT NULL,
+    AI_RECOMMENDED_CHANNEL  VARCHAR2(50)    NOT NULL,
+    AGENT_OVERRIDE_FLAG     NUMBER(1)       NOT NULL,
+    OVERRIDE_REASON_CODE    VARCHAR2(100)       NULL,
+    ACTUAL_CHANNEL_USED     VARCHAR2(50)    NOT NULL,
+    CUSTOMER_OUTCOME        VARCHAR2(50)    NOT NULL,
+    BANDIT_REWARD_SCORE     NUMBER(5, 2)        NULL,
+    CREATED_AT              TIMESTAMP       DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    
+    CONSTRAINT PK_COLL_AI_RL_FEEDBACK 
+        PRIMARY KEY (DAY_DATE, INST_CODE, COUNTRY_CODE, CUST_INFO_ID),
+    CONSTRAINT CHK_RL_FEEDBACK_OVERRIDE 
+        CHECK (AGENT_OVERRIDE_FLAG IN (0, 1))
+);
+
+COMMENT ON TABLE BI_DWH.PIO_COLL_AI_RL_FEEDBACK 
+    IS 'Captures the final agent action and customer outcome to calculate the Bandit Reward Score for continuous model training.';
+```
+
+### RL Feedback Data Dictionary
+
+| Column | Description | Details / Logic |
+| :--- | :--- | :--- |
+| `DAY_DATE` | Business execution date | The business date the action was executed. |
+| `INST_CODE` | Institution code | Institution code identifier (part of tenant key). |
+| `COUNTRY_CODE` | Country code | Country code identifier (part of tenant key). |
+| `CUST_INFO_ID` | Customer Information ID | The unique customer identifier. |
+| `AI_RECOMMENDED_CHANNEL` | Suggested channel | The original outreach channel suggested by the AI (e.g., Email, Call). |
+| `AGENT_OVERRIDE_FLAG` | Override indicator | Binary 1 (Overridden) or 0 (Accepted). Indicates if the human agent changed the AI recommendation. |
+| `OVERRIDE_REASON_CODE` | Override reason justification | The CBJ justification code if the agent overrode the AI (e.g., 'Force Majeure'). |
+| `ACTUAL_CHANNEL_USED` | Executed channel | The outreach channel that was ultimately executed. |
+| `CUSTOMER_OUTCOME` | Customer reaction | The real-world result (e.g., 'IGNORED', 'KEPT_PTP', 'BROKEN_PTP', 'PAID_IN_FULL'). |
+| `BANDIT_REWARD_SCORE` | Bandit reward score | The computed mathematical reward (+1, -1, etc.) fed back to train the model weights. |
+
 ### to do list
 
 - [ ]

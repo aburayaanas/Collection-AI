@@ -330,3 +330,58 @@ class RuleEngine:
 
         # EMAIL has no ceiling — always allowed for eligible customers
         return False, ""
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Financial Guardrails — Block 5 boundaries calculation
+# ═══════════════════════════════════════════════════════════════════════
+
+class FinancialGuardrails:
+    """Calculates strict negotiation boundaries and expected financial recovery for Collection Cockpit."""
+
+    @staticmethod
+    def calculate_boundaries(customer_data: dict, hypothesis_signal: bool) -> dict:
+        """Calculate negotiation limits and empathetic sensitivity flags.
+
+        Args:
+            customer_data (dict): Raw or normalized customer attributes.
+            hypothesis_signal (bool): True if 'Liquidity Disruption' or similar crisis detected.
+
+        Returns:
+            dict: Structured negotiation boundaries and sensitivity guidelines.
+        """
+        # Support case-insensitive key extraction
+        normalised = {k.lower(): v for k, v in customer_data.items()}
+
+        current_arrears = float(normalised.get("current_arrears_jod") or normalised.get("total_due") or 0.0)
+        accrued_interest = float(normalised.get("accrued_interest_jod") or 0.0)
+        segment = str(normalised.get("customer_segment") or normalised.get("segment") or "Mass retail")
+
+        # minimum_acceptable_cash: 30% of CURRENT_ARREARS_JOD
+        minimum_acceptable_cash = round(current_arrears * 0.30, 2)
+
+        # max_restructuring_term_months: Based on segment (e.g., 18 months for Retail, 24 months for Wealth)
+        if "wealth" in segment.lower():
+            max_restructuring_term_months = 24
+        else:
+            max_restructuring_term_months = 18
+
+        # interest_waiver_authority: 15% of ACCRUED_INTEREST_JOD without senior approval
+        interest_waiver_authority = round(accrued_interest * 0.15, 2)
+
+        # late_fee_waiver: 100% pre-approved
+        late_fee_waiver = "100% pre-approved"
+
+        # Sensitivity Flag Check
+        sensitivity_flag = None
+        if hypothesis_signal:
+            sensitivity_flag = "Liquidity-crisis hypothesis warrants an empathetic, solution-first approach. Agent authorized to offer 30-day full payment moratorium without escalation."
+
+        return {
+            "minimum_acceptable_cash": minimum_acceptable_cash,
+            "max_restructuring_term_months": max_restructuring_term_months,
+            "interest_waiver_authority": interest_waiver_authority,
+            "late_fee_waiver": late_fee_waiver,
+            "sensitivity_flag": sensitivity_flag,
+        }
+

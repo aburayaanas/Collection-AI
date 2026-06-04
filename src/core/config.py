@@ -31,6 +31,16 @@ class Settings(BaseSettings):
     # --- Model Thresholds ---
     WILLINGNESS_THRESHOLD: float = 0.7
     ABILITY_THRESHOLD: float = 0.5
+    
+    # --- LLM Narrative Config (Local — LM Studio fallback) ---
+    LLM_BASE_URL: str = Field(default="http://localhost:1234/v1", description="Base URL for local LLM server (e.g., LM Studio)")
+    LLM_MODEL_NAME: str = Field(default="your-local-model-name-here", description="Name of the model loaded in LM Studio")
+    LLM_API_KEY: SecretStr = Field(default=SecretStr("lm-studio"), description="API Key for the LLM server")
+
+    # --- OpenAI API Config (Executive Demo / Cloud toggle) ---
+    USE_OPENAI_API: bool = Field(default=False, description="If True, routes LLM calls to OpenAI instead of local LM Studio")
+    OPENAI_API_KEY: SecretStr = Field(default=SecretStr(""), description="OpenAI API Key (sk-...)")
+    OPENAI_MODEL_NAME: str = Field(default="gpt-4o", description="OpenAI model to use (e.g., gpt-4o)")
 
     BASE_DIR: str = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     model_config = SettingsConfigDict(

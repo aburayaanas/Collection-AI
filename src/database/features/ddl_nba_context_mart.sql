@@ -37,6 +37,28 @@ CREATE TABLE BI_DWH.PIO_COLL_AI_NBA_CONTEXT_MART (
     -- Outbound call attempts today — enforced against MAX_CALLS_PER_DAY ceiling
     CALLS_MADE_TODAY        NUMBER(3)       DEFAULT 0         NOT NULL,
 
+    -- Block 1 UI: KYC & Customer Identity Overview
+    FULL_LEGAL_NAME         VARCHAR2(255)                     NULL,
+    CUSTOMER_SEGMENT        VARCHAR2(100)                     NULL,
+    NATIONALITY_RESIDENCY   VARCHAR2(100)                     NULL,
+    EMPLOYER_NAME           VARCHAR2(255)                     NULL,
+    VERIFIED_INCOME_JOD     NUMBER(15, 2)                     NULL,
+    INCOME_LAST_VERIFIED_DATE DATE                            NULL,
+    AML_LAST_SCREENED_DATE  DATE                              NULL,
+    ACCOUNT_OPEN_DATE       DATE                              NULL,
+    PRODUCTS_HELD           VARCHAR2(255)                     NULL,
+    PRIMARY_PHONE           VARCHAR2(50)                      NULL,
+
+    -- Block 2 UI: Matrix & Quadrant Classification
+    SCORE_DELTA_90D         NUMBER(5)                         NULL,
+    COMPOSITE_RISK_SCORE    NUMBER(5)                         NULL,
+    DAYS_PAST_DUE           NUMBER(5)                         NULL,
+    CLASSIFICATION_PROBABILITIES CLOB                         NULL,
+
+    -- Block 3: Behavioral Signal Interpretation
+    PAYMENT_REJECTION_FREQ  NUMBER(5)                         NULL,
+    CONTACT_AVOIDANCE_INDEX NUMBER(5, 2)                      NULL,
+
     -- Audit
     CREATED_AT              TIMESTAMP       DEFAULT CURRENT_TIMESTAMP NOT NULL,
     UPDATED_AT              TIMESTAMP       DEFAULT CURRENT_TIMESTAMP NOT NULL,

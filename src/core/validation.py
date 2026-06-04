@@ -259,10 +259,10 @@ def validate_matrix_inputs(
         dupes = df.height - df["CUST_INFO_ID"].n_unique()
         if dupes > 0:
             logger.warning(
-                f"[{context}] ⚠ {dupes} duplicate CUST_INFO_ID values detected. "
+                f"[{context}] {dupes} duplicate CUST_INFO_ID values detected. "
                 f"MERGE may produce unexpected results."
             )
 
     logger.info(
-        f"[{context}] ✅ Matrix validation passed: {df.height:,} rows"
+        f"[{context}] Matrix validation passed: {df.height:,} rows"
     )

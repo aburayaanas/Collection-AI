@@ -59,6 +59,37 @@ python scripts/generate_synthatic_data.py
 python -m src.main
 ```
 
+### 5. Run the Real-Time Narrative API (Lazy-Loading LLM)
+This API lazy-loads 2-to-3 sentence executive summaries for collection officers in real-time by pulling the pre-processed `AI_PAYLOAD` from the database, running it through a local LLM, caching the output in `AI_NARRATIVE`, and returning it.
+
+#### Prerequisites:
+1. **LM Studio Setup**:
+   - Download and run [LM Studio](https://lmstudio.ai/).
+   - Download a local LLM (e.g., Llama 3, Mistral, or Qwen).
+   - Start the **Local Inference Server** on port `1234` (the default).
+   - Ensure the server is running and a model is loaded.
+2. **Environment Variables**:
+   Update your `.env` file with your local model configuration:
+   ```bash
+   LLM_BASE_URL="http://localhost:1234/v1"
+   LLM_MODEL_NAME="your-local-model-name-here" # e.g. "meta-llama-3-8b-instruct"
+   LLM_API_KEY="lm-studio"
+   ```
+
+#### Start the API Server:
+Use `uvicorn` to start the FastAPI server:
+```bash
+uvicorn src.api.app:app --host 0.0.0.0 --port 8000 --reload
+```
+
+#### Test the LLM Generation:
+Open your browser or run a `curl` request to fetch a narrative. The endpoint expects the customer ID, country code, institution code, and snapshot date as query parameters:
+```bash
+curl -X GET "http://localhost:8000/customer/123/narrative?country_code=400&inst_code=1&day_date=2026-05-17"
+```
+- **First Call**: Fetches the payload, invokes the local LLM using the strict guardrails in `llm_system_prompt.md`, caches the result back in Oracle as a `CLOB`, and returns `status: "GENERATED"`.
+- **Subsequent Calls**: Instantaneous, pulling directly from the cached database field, returning `status: "CACHED"`.
+
 ---
 
 ## System Architecture

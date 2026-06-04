@@ -4,6 +4,16 @@ All notable changes to the Collection AI project will be documented in this file
 
 ---
 
+## [Unreleased] — 2026-06-04
+
+### Added — Database Marts Reference Documentation
+- `docs/table_marts_summary.md`: A comprehensive schema dictionary detailing fully qualified column paths (e.g. `PIO_COLL_AI_WILLINGNESS_MART.CUST_INFO_ID`), English object name expansions, Arabic translations, data types, nullability, and database comments (describing AI calculation logic and DB procedures) for all key data marts (`PIO_COLL_AI_WILLINGNESS_MART`, `PIO_COLL_AI_ABILITY_MART`, `PIO_COLL_AI_NBA_CONTEXT_MART`) and output tables.
+- `Collection_AI_Input_Marts_Mapping_Checklist.xlsx`: Fully populated the Excel mapping checklist template with sheets for `PIO_COLL_AI_WILLINGNESS_MART`, `PIO_COLL_AI_ABILITY_MART`, and `PIO_COLL_AI_NBA_CONTEXT_MART`, using standard Left-to-Right (LTR) column orientation, custom headers, data types, nullability (M/O), and descriptive English/Arabic comments.
+- `Collection_AI_Output_Tables_Mapping_Checklist.xlsx`: Created and populated a new Excel workbook for the output and decision tables (`PIO_COLL_AI_MATRIX_RESULTS` and `PIO_COLL_AI_NBA_ACTIONS`) with standard LTR column layout, custom headers, data types, nullability (M/O), and English/Arabic comments.
+- `docs/DB_Schema.md`: Added the DDL schema script and data dictionary for the new reinforcement learning feedback table `PIO_COLL_AI_RL_FEEDBACK`.
+
+---
+
 ## [Unreleased] — 2026-05-15
 
 ### Added — NBA Engine Wiring (Phase 2 Complete)

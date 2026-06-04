@@ -47,6 +47,8 @@ from src.core.logger import get_logger
 from src.engine.nba.bandit import ContextualBandit
 from src.engine.nba.guardrails import RuleEngine
 from src.engine.nba.schemas import Channel, CustomerState, NBAOutput, Treatment # noqa: F401
+from src.explainability.xai_aggregator import CockpitAggregator
+from src.core.config import settings
 
 logger = get_logger(__name__)
 
@@ -150,6 +152,8 @@ class NBAOrchestrator:
 
         # ── Step 1: Validate input ───────────────────────────────────
         try:
+            from src.engine.inference.signal_interpreter import SignalInterpreter
+            raw_data["behavioral_signals"] = SignalInterpreter.generate_signals(raw_data)
             customer = CustomerState(**raw_data)
         except ValidationError as exc:
             logger.error(
@@ -254,11 +258,32 @@ class NBAOrchestrator:
             normalised = {k.lower(): v for k, v in row.items()}
             output = self.process_single_customer(normalised)
 
+            # Generate Cockpit Payload for Lazy-Loading LLM
+            ai_payload = CockpitAggregator.generate_payload_string(
+                cust_info_id=output.cust_info_id,
+                country_code=settings.COUNTRY_CODE,
+                inst_code=settings.INST_CODE,
+                day_date=str(row.get("DAY_DATE", "UNKNOWN")),
+                quadrant=str(row.get("CURRENT_QUADRANT", "UNKNOWN")),
+                will_risk=row.get("WILL_RISK_DRIVERS"),
+                will_pos=row.get("WILL_POSITIVE_DRIVERS"),
+                abil_risk=row.get("ABIL_RISK_DRIVERS"),
+                abil_pos=row.get("ABIL_POSITIVE_DRIVERS"),
+                nba_channel=output.recommended_channel,
+                nba_treatment=output.recommended_treatment,
+                scored_alternatives=[a.model_dump() for a in getattr(output, "scored_alternatives", [])],
+                raw_record=row
+            )
+            import json
+            scored_alts_json = json.dumps([a.model_dump() for a in getattr(output, "scored_alternatives", [])])
+
             results.append({
                 _COL_CUST_ID:  output.cust_info_id,
                 _COL_CHANNEL:  output.recommended_channel,
                 _COL_OFFER:    output.recommended_treatment,
                 _COL_REASON:   output.reason_code,
+                "AI_PAYLOAD":  ai_payload,
+                "SCORED_ALTERNATIVES": scored_alts_json,
             })
 
             if output.reason_code.startswith("ERROR:"):
@@ -271,6 +296,8 @@ class NBAOrchestrator:
                 _COL_CHANNEL: pl.Utf8,
                 _COL_OFFER:   pl.Utf8,
                 _COL_REASON:  pl.Utf8,
+                "AI_PAYLOAD": pl.Utf8,
+                "SCORED_ALTERNATIVES": pl.Utf8,
             },
         )
 

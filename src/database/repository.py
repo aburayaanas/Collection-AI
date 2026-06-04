@@ -197,11 +197,31 @@ class CollectionRepository:
         logger.info(f"Retrieved {len(rows):,} NBA context records")
 
         schema = {
-            "CUST_INFO_ID":       pl.String,
-            "ACCOUNT_STATUS":     pl.String,
-            "TOTAL_DUE":          pl.Float64,
-            "SMS_SENT_THIS_WEEK": pl.Int64,
-            "CALLS_MADE_TODAY":   pl.Int64,
+            "CUST_INFO_ID":               pl.String,
+            "ACCOUNT_STATUS":             pl.String,
+            "TOTAL_DUE":                  pl.Float64,
+            "SMS_SENT_THIS_WEEK":         pl.Int64,
+            "CALLS_MADE_TODAY":           pl.Int64,
+            "FULL_LEGAL_NAME":            pl.String,
+            "CUSTOMER_SEGMENT":           pl.String,
+            "NATIONALITY_RESIDENCY":      pl.String,
+            "EMPLOYER_NAME":              pl.String,
+            "VERIFIED_INCOME_JOD":         pl.Float64,
+            "INCOME_LAST_VERIFIED_DATE":  pl.Datetime,
+            "AML_LAST_SCREENED_DATE":     pl.Datetime,
+            "ACCOUNT_OPEN_DATE":          pl.Datetime,
+            "PRODUCTS_HELD":              pl.String,
+            "PRIMARY_PHONE":              pl.String,
+            "SCORE_DELTA_90D":            pl.Int64,
+            "COMPOSITE_RISK_SCORE":       pl.Int64,
+            "DAYS_PAST_DUE":              pl.Int64,
+            "CLASSIFICATION_PROBABILITIES": pl.Utf8,
+            "PAYMENT_REJECTION_FREQ": pl.Int64,
+            "CONTACT_AVOIDANCE_INDEX": pl.Float64,
+            "TOTAL_EXPOSURE_JOD":         pl.Float64,
+            "CURRENT_ARREARS_JOD":        pl.Float64,
+            "ACCRUED_INTEREST_JOD":       pl.Float64,
+            "LATE_FEES_JOD":              pl.Float64
         }
 
         df = pl.DataFrame(rows, schema=schema, orient="row")
@@ -212,10 +232,49 @@ class CollectionRepository:
             pl.col("TOTAL_DUE").fill_null(0.0),
             pl.col("SMS_SENT_THIS_WEEK").fill_null(0),
             pl.col("CALLS_MADE_TODAY").fill_null(0),
+            pl.col("TOTAL_EXPOSURE_JOD").fill_null(0.0),
+            pl.col("CURRENT_ARREARS_JOD").fill_null(0.0),
+            pl.col("ACCRUED_INTEREST_JOD").fill_null(0.0),
+            pl.col("LATE_FEES_JOD").fill_null(0.0),
         ])
 
         logger.info(f"NBA context DataFrame: {df.shape[0]:,} rows x {df.shape[1]} columns")
         return df
+
+    def get_shap_results(self) -> pl.DataFrame:
+        """Fetch SHAP Vector Narratives from the Matrix Results table."""
+        logger.info("Fetching SHAP results for Cockpit Payload...")
+        snap_date = get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
+        if not snap_date:
+            raise ValueError("Snapshot date retrieval failed")
+
+        sql = """
+            SELECT CUST_INFO_ID, 
+                   WILL_RISK_DRIVERS, WILL_POSITIVE_DRIVERS,
+                   ABIL_RISK_DRIVERS, ABIL_POSITIVE_DRIVERS
+            FROM BI_DWH.PIO_COLL_AI_MATRIX_RESULTS
+            WHERE DAY_DATE = TO_DATE(:day_date, 'YYYY-MM-DD')
+              AND INST_CODE = :inst_code
+              AND COUNTRY_CODE = :country_code
+        """
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, {
+                'day_date': snap_date,
+                'inst_code': settings.INST_CODE,
+                'country_code': settings.COUNTRY_CODE,
+            })
+            rows = cursor.fetchall()
+            cursor.close()
+
+        schema = {
+            "CUST_INFO_ID": pl.String,
+            "WILL_RISK_DRIVERS": pl.String,
+            "WILL_POSITIVE_DRIVERS": pl.String,
+            "ABIL_RISK_DRIVERS": pl.String,
+            "ABIL_POSITIVE_DRIVERS": pl.String,
+        }
+        return pl.DataFrame(rows, schema=schema, orient="row")
 
     def upsert_matrix_results(self, df: pl.DataFrame) -> None:
         """
@@ -334,6 +393,8 @@ class CollectionRepository:
             "RECOMMENDED_CHANNEL",
             "RECOMMENDED_OFFER",
             "REASON_CODE",
+            "AI_PAYLOAD",
+            "SCORED_ALTERNATIVES",
         ]).to_dicts()
 
         merge_sql = """
@@ -349,6 +410,9 @@ class CollectionRepository:
                     RECOMMENDED_CHANNEL = :RECOMMENDED_CHANNEL,
                     RECOMMENDED_OFFER   = :RECOMMENDED_OFFER,
                     REASON_CODE         = :REASON_CODE,
+                    AI_PAYLOAD          = :AI_PAYLOAD,
+                    SCORED_ALTERNATIVES = :SCORED_ALTERNATIVES,
+                    AI_NARRATIVE        = 'PENDING',
                     UPDATED_AT          = CURRENT_TIMESTAMP
             WHEN NOT MATCHED THEN
                 INSERT (
@@ -359,6 +423,9 @@ class CollectionRepository:
                     RECOMMENDED_CHANNEL,
                     RECOMMENDED_OFFER,
                     REASON_CODE,
+                    AI_PAYLOAD,
+                    SCORED_ALTERNATIVES,
+                    AI_NARRATIVE,
                     CREATED_AT,
                     UPDATED_AT
                 )
@@ -370,14 +437,23 @@ class CollectionRepository:
                     :RECOMMENDED_CHANNEL,
                     :RECOMMENDED_OFFER,
                     :REASON_CODE,
+                    :AI_PAYLOAD,
+                    :SCORED_ALTERNATIVES,
+                    'PENDING',
                     CURRENT_TIMESTAMP,
                     CURRENT_TIMESTAMP
                 )
         """
 
         with db.get_connection() as conn:
+            import oracledb
             cursor = conn.cursor()
             try:
+                # CRITICAL: Prevent ORA-01461 / ORA-01704 for large JSON strings
+                cursor.setinputsizes(
+                    AI_PAYLOAD=oracledb.DB_TYPE_CLOB,
+                    SCORED_ALTERNATIVES=oracledb.DB_TYPE_CLOB
+                )
                 cursor.executemany(merge_sql, records, batcherrors=True)
 
                 errors = cursor.getbatcherrors()

@@ -12,7 +12,7 @@ traversal.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Final, List, Literal, Optional   # noqa: F401
+from typing import Final, List, Literal, Optional, Any   # noqa: F401
 
 from pydantic import BaseModel, Field, field_validator  # noqa: F401
 
@@ -89,6 +89,7 @@ class CustomerState(BaseModel):
         calls_made_today (int): Outbound call attempts made today.
             Enforced against MAX_CALLS_PER_DAY ceiling to prevent
             harassment and comply with central bank guidelines.
+        behavioral_signals (List[Any]): List of generated behavioral signals.
 
     Raises:
         ValueError: If total_due is negative or contact counts are
@@ -124,6 +125,10 @@ class CustomerState(BaseModel):
         default=0,
         ge=0,
         description="Outbound call count today for anti-harassment ceiling.",
+    )
+    behavioral_signals: List[Any] = Field(
+        default_factory=list,
+        description="List of behavioral signals from the Inference Engine.",
     )
 
 
@@ -171,6 +176,14 @@ class ActionSpace(BaseModel):
 #  NBA Output — Final DB Payload
 # ═══════════════════════════════════════════════════════════════════════
 
+class ScoredAlternative(BaseModel):
+    """Represents a scored channel alternative evaluated by the Bandit."""
+    channel: str
+    score: int = Field(ge=0, le=100)
+    is_selected: bool
+    reasoning: str
+
+
 class NBAOutput(BaseModel):
     """Final recommendation payload persisted to the database.
 
@@ -188,6 +201,8 @@ class NBAOutput(BaseModel):
             this action was recommended (e.g., "EXCLUDED:LEGAL",
             "BANDIT:Q1_SMS_PTP"). Used for regulatory reporting
             and model governance.
+        scored_alternatives (List[ScoredAlternative]): Ranked list of all
+            evaluated communication channels with their confidence scores.
     """
 
     model_config = {"frozen": True}
@@ -208,4 +223,8 @@ class NBAOutput(BaseModel):
     reason_code: str = Field(
         ...,
         description="Audit-trail code for regulatory reporting.",
+    )
+    scored_alternatives: List[ScoredAlternative] = Field(
+        default_factory=list,
+        description="Ranked list of evaluated communication channels.",
     )

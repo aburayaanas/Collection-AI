@@ -222,24 +222,20 @@ def _shap_batch_worker(
     batch_id: int,
     top_n: int,
     model_type: str,
-    feature_name_map: Dict[str, str],
-    feature_desc_map: Dict[str, str],
 ) -> List[Dict[str, Any]]:
     """
     Pickle-friendly worker executed in a child process.
 
-    For each row:
-    1. Compute SHAP values via TreeExplainer.
-    2. Sort features by |SHAP value| descending → select top_n.
-    3. Compute relative importance as |sv| / sum(|all_sv|) * 100.
-    4. Format technical string: "FEAT: XX.X%; FEAT2: YY.Y%"
-    5. Build description string from feature_desc_map.
-
-    Returns list of dicts (serialisable across process boundary).
+    Uses XAIMapper to translate technical columns to UI labels and
+    business context for LLM narrative generation.
     """
+    import json
     import xgboost as xgb
     import shap
     import numpy as np
+    from src.explainability.xai_mapper import XAIMapper
+
+    mapper = XAIMapper()
 
     # ── Reconstruct model in child process ───────────────────────────
     tmp_path = os.path.join(
@@ -270,8 +266,8 @@ def _shap_batch_worker(
             results.append(
                 {
                     "row_idx": row_idx,
-                    "reason_cols": "",
-                    "reason_desc": "",
+                    "risk_drivers": "[]",
+                    "positive_drivers": "[]",
                     "batch_id": batch_id,
                 }
             )
@@ -280,24 +276,51 @@ def _shap_batch_worker(
         # Top-N features by absolute SHAP value
         sorted_idx = np.argsort(abs_sv)[::-1][:top_n]
 
-        tech_parts = []
-        desc_parts = []
+        risk_drivers = []
+        positive_drivers = []
+        
+        def get_impact(percentage_val):
+            if percentage_val >= 25.0:
+                return "Primary Driver"
+            elif percentage_val >= 10.0:
+                return "Secondary Factor"
+            else:
+                return "Contributing Factor"
+
         for idx in sorted_idx:
             feat = feature_names[idx]
-            pct = (abs_sv[idx] / total_abs) * 100.0
-            tech_parts.append(f"{feat}: {pct:.1f}%")
+            metadata = mapper.get_metadata(feat)
+            shap_val = float(sv[idx])
+            
+            # Calculate percentage impact relative to total variance
+            pct = (abs(shap_val) / total_abs) * 100.0 if total_abs > 0 else 0
+            
+            entry = {
+                "feature": metadata.ui_label,
+                "impact": get_impact(pct),
+                "percentage": round(pct, 2)
+            }
+            
+            if shap_val < 0:
+                risk_drivers.append(entry)
+            else:
+                positive_drivers.append(entry)
 
-            desc = feature_desc_map.get(
-                feat.upper(),
-                f"Model factor: {feat.replace('_', ' ').title()}.",
-            )
-            desc_parts.append(desc)
+        try:
+            risk_json = json.dumps(risk_drivers)
+        except Exception:
+            risk_json = "[]"
+            
+        try:
+            pos_json = json.dumps(positive_drivers)
+        except Exception:
+            pos_json = "[]"
 
         results.append(
             {
                 "row_idx": row_idx,
-                "reason_cols": "; ".join(tech_parts),
-                "reason_desc": ", ".join(desc_parts),
+                "risk_drivers": risk_json,
+                "positive_drivers": pos_json,
                 "batch_id": batch_id,
             }
         )
@@ -374,8 +397,8 @@ class CollectionShapExplainer:
         model_type: str = "willingness",
         target_col: str = "prediction",
         id_col: str = "CUST_INFO_ID",
-        reason_cols: str = "reason_cols",
-        descriptive_col: str = "reason_desc",
+        risk_drivers_col: str = "SHAP_RISK_DRIVERS",
+        positive_drivers_col: str = "SHAP_POSITIVE_DRIVERS",
         exclude_cols: Optional[Set[str]] = None,
     ) -> pl.DataFrame:
         """
@@ -408,8 +431,8 @@ class CollectionShapExplainer:
             )
             return df.with_columns(
                 [
-                    pl.lit("").alias(reason_cols),
-                    pl.lit("").alias(descriptive_col),
+                    pl.lit("[]").alias(risk_drivers_col),
+                    pl.lit("[]").alias(positive_drivers_col),
                 ]
             )
 
@@ -462,28 +485,6 @@ class CollectionShapExplainer:
         # 4 ── serialise model
         model_bytes = self._serialise_model(model)
 
-        # Load feature dictionaries (passed to workers to avoid
-        # import-path issues in child processes on Windows)
-        from src.explainability.feature_name_expansion import (
-            willingness_feature_name_expansion,
-            ability_feature_name_expansion,
-        )
-        from src.explainability.description import (
-            willingness_feature_descriptions,
-            ability_feature_descriptions,
-        )
-
-        feat_name_map = (
-            willingness_feature_name_expansion
-            if model_type == "willingness"
-            else ability_feature_name_expansion
-        )
-        feat_desc_map = (
-            willingness_feature_descriptions
-            if model_type == "willingness"
-            else ability_feature_descriptions
-        )
-
         # 5 ── split into batches
         n_total = len(X)
         n_batches = math.ceil(n_total / self.batch_size)
@@ -514,8 +515,6 @@ class CollectionShapExplainer:
                         bid,
                         self.top_n,
                         model_type,
-                        feat_name_map,
-                        feat_desc_map,
                     )
                     all_results.extend(batch_res)
                 except Exception as e:
@@ -536,8 +535,6 @@ class CollectionShapExplainer:
                         bid,
                         self.top_n,
                         model_type,
-                        feat_name_map,
-                        feat_desc_map,
                     )
                     futures[fut] = bid
 
@@ -562,11 +559,11 @@ class CollectionShapExplainer:
                     "row_idx": [
                         r["row_idx"] for r in all_results
                     ],
-                    reason_cols: [
-                        r["reason_cols"] for r in all_results
+                    risk_drivers_col: [
+                        r["risk_drivers"] for r in all_results
                     ],
-                    descriptive_col: [
-                        r["reason_desc"] for r in all_results
+                    positive_drivers_col: [
+                        r["positive_drivers"] for r in all_results
                     ],
                 }
             )
@@ -574,8 +571,8 @@ class CollectionShapExplainer:
             results_df = pl.DataFrame(
                 {
                     "row_idx": pl.Series([], dtype=pl.UInt32),
-                    reason_cols: pl.Series([], dtype=pl.Utf8),
-                    descriptive_col: pl.Series([], dtype=pl.Utf8),
+                    risk_drivers_col: pl.Series([], dtype=pl.Utf8),
+                    positive_drivers_col: pl.Series([], dtype=pl.Utf8),
                 }
             )
 
@@ -584,8 +581,8 @@ class CollectionShapExplainer:
 
         df_out = df_out.with_columns(
             [
-                pl.col(reason_cols).fill_null(""),
-                pl.col(descriptive_col).fill_null(""),
+                pl.col(risk_drivers_col).fill_null("[]"),
+                pl.col(positive_drivers_col).fill_null("[]"),
             ]
         )
 

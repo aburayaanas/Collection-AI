@@ -14,7 +14,7 @@ Design Principles:
 import sys
 from pathlib import Path
 import random
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import oracledb
 
@@ -102,6 +102,78 @@ def generate_dummy_data(num_records: int = NUM_RECORDS):
         sms_sent_this_week = random.choices(range(4), weights=_SMS_WEIGHTS)[0]
         calls_made_today   = random.choices(range(3), weights=_CALL_WEIGHTS)[0]
 
+        # ── KYC & Customer Identity Overview ──────────────────────────
+        first_names = ["Khalid", "Ahmed", "Omar", "Aisha", "Fatima", "Sara", "Ali", "Hassan", "Yousef", "Nour", "Rami"]
+        last_names = ["Al-Rashidi", "Mansour", "Haddad", "Al-Fayed", "Khoury", "Al-Zoubi", "Othman", "Al-Safi", "Awad"]
+        full_legal_name = f"{random.choice(first_names)} {random.choice(first_names)} {random.choice(last_names)}"
+        
+        customer_segment = random.choice(["Mass retail · Salaried", "Mass retail · Self-employed", "Wealth · Salaried"])
+        nationality_residency = random.choice(["Jordanian · Resident", "Expat · Resident"])
+        
+        if "Self-employed" in customer_segment:
+            employer_name = "Self / Trade License"
+        else:
+            employer_name = random.choice(["Arab Bank", "Zain", "Hikma Pharmaceuticals", "Royal Jordanian", "Ministry of Education", "Orange"])
+            
+        if "Wealth" in customer_segment:
+            verified_income_jod = round(random.uniform(3000.0, 15000.0), 2)
+        else:
+            verified_income_jod = round(random.uniform(500.0, 2500.0), 2)
+            
+        income_verified_months_ago = random.randint(1, 24)
+        income_last_verified_date = snapshot_date - timedelta(days=30 * income_verified_months_ago)
+        
+        aml_last_screened_date = snapshot_date - timedelta(days=random.randint(1, 180))
+        
+        account_open_months_ago = random.randint(income_verified_months_ago + 1, 120)
+        account_open_date = snapshot_date - timedelta(days=30 * account_open_months_ago)
+        
+        products_held = random.choice([
+            "Personal loan", 
+            "Credit card · Savings", 
+            "Personal loan · Credit card · Savings", 
+            "Mortgage · Current account",
+            "Auto loan · Credit card"
+        ])
+        
+        primary_phone = f"+962 79 {random.randint(100, 999)} {random.randint(1000, 9999)}"
+
+        # ── Block 2: Matrix & Quadrant Classification ─────────────────
+        score_delta_90d = random.randint(-50, 20)
+        composite_risk_score = random.randint(0, 100)
+        
+        import json
+        
+        # Correlate DPD somewhat to the quadrant/target
+        if target_w == 0 and target_a == 0:  # Q4-ish
+            days_past_due = random.randint(60, 180)
+            p_label, c_label = "Q4", "Q3"
+        elif target_w == 1 and target_a == 0: # Q2
+            days_past_due = random.randint(30, 90)
+            p_label, c_label = "Q2", "Q4"
+        elif target_w == 0 and target_a == 1: # Q3
+            days_past_due = random.randint(30, 120)
+            p_label, c_label = "Q3", "Q4"
+        else: # Q1
+            days_past_due = random.randint(1, 30)
+            p_label, c_label = "Q1", "Q2"
+            
+        classification_probs = json.dumps({
+            "primary": {"label": p_label, "conf": round(random.uniform(0.60, 0.95), 2)},
+            "competing": {"label": c_label, "conf": round(random.uniform(0.10, 0.30), 2)},
+            "residual": {"label": "Q_OTHER", "conf": round(random.uniform(0.01, 0.09), 2)}
+        })
+        
+        # ── Block 3: Behavioral Signal Data ───────────────────────────
+        payment_rejection_freq = random.randint(0, 5)
+        contact_avoidance_index = round(random.uniform(0.0, 1.0), 2)
+
+        # ── Block 5: Financial Exposure Data ──────────────────────────
+        total_exposure_jod = round(random.uniform(1000.0, 50000.0), 2)
+        current_arrears_jod = round(total_exposure_jod * random.uniform(0.05, 0.35), 2)
+        accrued_interest_jod = round(current_arrears_jod * random.uniform(0.02, 0.10), 2)
+        late_fees_jod = round(random.uniform(15.0, 100.0), 2)
+
         context_data.append((
             snapshot_date, settings.INST_CODE, settings.COUNTRY_CODE,
             cust_info_id,
@@ -109,6 +181,26 @@ def generate_dummy_data(num_records: int = NUM_RECORDS):
             total_due,
             sms_sent_this_week,
             calls_made_today,
+            full_legal_name,
+            customer_segment,
+            nationality_residency,
+            employer_name,
+            verified_income_jod,
+            income_last_verified_date,
+            aml_last_screened_date,
+            account_open_date,
+            products_held,
+            primary_phone,
+            score_delta_90d,
+            composite_risk_score,
+            days_past_due,
+            classification_probs,
+            payment_rejection_freq,
+            contact_avoidance_index,
+            total_exposure_jod,
+            current_arrears_jod,
+            accrued_interest_jod,
+            late_fees_jod
         ))
 
     return willingness_data, ability_data, context_data
@@ -123,6 +215,23 @@ def insert_data(willingness_data: list, ability_data: list, context_data: list) 
     try:
         with db.get_connection() as connection:
             with connection.cursor() as cursor:
+                # ── Ensure Columns Exist for Block 5 ──────────────────
+                try:
+                    cursor.execute("""
+                        ALTER TABLE BI_DWH.PIO_COLL_AI_NBA_CONTEXT_MART ADD (
+                            TOTAL_EXPOSURE_JOD NUMBER(15,2),
+                            CURRENT_ARREARS_JOD NUMBER(15,2),
+                            ACCRUED_INTEREST_JOD NUMBER(15,2),
+                            LATE_FEES_JOD NUMBER(15,2)
+                        )
+                    """)
+                    print("Successfully added financial columns to PIO_COLL_AI_NBA_CONTEXT_MART.")
+                except oracledb.DatabaseError as e:
+                    if "ORA-01430" in str(e):
+                        pass  # columns already exist
+                    else:
+                        print(f"Warning adding columns: {e}")
+
                 # ── 0. Clear Run (Truncate Tables) ────────────────────
                 print("Clearing old dummy data (Truncate)...")
                 cursor.execute("TRUNCATE TABLE PIO_COLL_AI_WILLINGNESS_MART")
@@ -163,8 +272,18 @@ def insert_data(willingness_data: list, ability_data: list, context_data: list) 
                     INSERT INTO BI_DWH.PIO_COLL_AI_NBA_CONTEXT_MART (
                         DAY_DATE, INST_CODE, COUNTRY_CODE, CUST_INFO_ID,
                         ACCOUNT_STATUS, TOTAL_DUE,
-                        SMS_SENT_THIS_WEEK, CALLS_MADE_TODAY
-                    ) VALUES (:1, :2, :3, :4, :5, :6, :7, :8)
+                        SMS_SENT_THIS_WEEK, CALLS_MADE_TODAY,
+                        FULL_LEGAL_NAME, CUSTOMER_SEGMENT,
+                        NATIONALITY_RESIDENCY, EMPLOYER_NAME,
+                        VERIFIED_INCOME_JOD, INCOME_LAST_VERIFIED_DATE,
+                        AML_LAST_SCREENED_DATE, ACCOUNT_OPEN_DATE,
+                        PRODUCTS_HELD, PRIMARY_PHONE,
+                        SCORE_DELTA_90D, COMPOSITE_RISK_SCORE,
+                        DAYS_PAST_DUE, CLASSIFICATION_PROBABILITIES,
+                        PAYMENT_REJECTION_FREQ, CONTACT_AVOIDANCE_INDEX,
+                        TOTAL_EXPOSURE_JOD, CURRENT_ARREARS_JOD,
+                        ACCRUED_INTEREST_JOD, LATE_FEES_JOD
+                    ) VALUES (:1, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11, :12, :13, :14, :15, :16, :17, :18, :19, :20, :21, :22, :23, :24, :25, :26, :27, :28)
                 """
                 cursor.executemany(sql_context, context_data)
 
