@@ -98,46 +98,32 @@ class ShapResultsRepository:
              logger.error("Could not determine snapshot date for SHAP update!")
              return 0
              
-        # Safe type conversion for binding
-        try:
-            inst_code_val = int(settings.INST_CODE)
-        except (ValueError, TypeError):
-            inst_code_val = settings.INST_CODE
-            
-        try:
-            country_code_val = int(settings.COUNTRY_CODE)
-        except (ValueError, TypeError):
-            country_code_val = settings.COUNTRY_CODE
+        # Use raw string values directly to prevent padding/type mismatches
+        inst_code_val = settings.INST_CODE
+        country_code_val = settings.COUNTRY_CODE
 
         # Build list of dictionaries matching the named bind variables in the SQL:
         #   :cust_id
         #   :model_type
-        #   :explanation
-        #   :description
-        #   :raw_features
+        #   :risk_drivers
+        #   :positive_drivers
         #   :snap_date
         #   :inst_code
         #   :country_code
         records: List[Dict[str, Any]] = []
-        for row in unique_df.iter_rows(named=True):
-            cust_id = row["CUST_INFO_ID"]
-            raw_features = row.get("reason_cols", "")
-            description = row.get("reason_desc", "")
-
-            # Generate business-friendly explanation
-            explanation = format_shap_explanation(
-                raw_features, model_type=model_type
-            )
+        for row in df.to_dicts():
+            cust_id = row.get("CUST_INFO_ID")
+            risk_drivers = row.get("SHAP_RISK_DRIVERS")
+            positive_drivers = row.get("SHAP_POSITIVE_DRIVERS")
 
             records.append({
                 "cust_id": cust_id,
                 "model_type": model_type.upper(),
-                "explanation": explanation,
-                "description": description,
-                "raw_features": raw_features,
+                "risk_drivers": risk_drivers,
+                "positive_drivers": positive_drivers,
                 "snap_date": snap_date,
                 "inst_code": inst_code_val,
-                "country_code": country_code_val,
+                "country_code": country_code_val
             })
 
         # Execute in batches
@@ -147,6 +133,22 @@ class ShapResultsRepository:
         with db.get_connection() as conn:
             cursor = conn.cursor()
             try:
+                # ── Diagnostic: compare WHERE values before first batch ───
+                sample_id = records[0]["cust_id"]
+                cursor.execute(
+                    "SELECT CUST_INFO_ID, TO_CHAR(TRUNC(DAY_DATE), 'YYYY-MM-DD'), INST_CODE, COUNTRY_CODE "
+                    "FROM BI_DWH.PIO_COLL_AI_MATRIX_RESULTS "
+                    "WHERE TO_CHAR(CUST_INFO_ID) = TO_CHAR(:1) AND ROWNUM = 1",
+                    [sample_id]
+                )
+                row = cursor.fetchone()
+                
+                if row:
+                    sample_label = records[0].get('risk_drivers') or 'MISSING'
+                    logger.info(f"[SHAP] Data Match Found. Sample Risk Drivers JSON length: {len(sample_label)}")
+                else:
+                    logger.warning(f"[SHAP] No DB row found for CUST_INFO_ID={sample_id}. This usually means Matrix results haven't been committed.")
+
                 for start in range(0, len(records), self.batch_size):
                     batch = records[start : start + self.batch_size]
 
@@ -158,6 +160,16 @@ class ShapResultsRepository:
                     batch_ok = len(batch) - len(errors)
                     total_success += batch_ok
                     total_errors += len(errors)
+
+                    # Warn if no rows were actually matched (silent mismatch)
+                    if cursor.rowcount == 0 and batch_ok > 0:
+                        logger.warning(
+                            f"Batch [{start}:{start + len(batch)}]: "
+                            f"0 rows updated — DAY_DATE/INST_CODE/COUNTRY_CODE "
+                            f"may not match records in PIO_COLL_AI_MATRIX_RESULTS. "
+                            f"snap_date={snap_date}, inst={inst_code_val}, "
+                            f"country={country_code_val}"
+                        )
 
                     if errors:
                         logger.warning(

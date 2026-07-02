@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Dict, Any, Tuple
 
 import numpy as np
+import pandas as pd
 import polars as pl
 import xgboost as xgb
 import optuna
@@ -70,8 +71,17 @@ class WillingnessTrainer:
             logger.info(f"Target engineering complete. Dataset size: {df_labeled.height:,} rows")
 
             # Step 2: Prepare features
-            exclude_cols = {"IS_WILLING", "CUST_INFO_ID", "SNAPSHOT_DATE", "TARGET_WILLINGNESS"}
+            # NBA context columns live in this mart for the DB team's convenience
+            # but are NOT behavioral predictors — exclude them from XGBoost features.
+            exclude_cols = {
+                "IS_WILLING", "CUST_INFO_ID", "SNAPSHOT_DATE", "TARGET_WILLINGNESS",
+                # NBA operational state columns (non-predictive for willingness)
+                "ACCOUNT_STATUS", "TOTAL_DUE", "SMS_SENT_THIS_WEEK", "CALLS_MADE_TODAY",
+            }
             feature_cols = [col for col in df_labeled.columns if col not in exclude_cols]
+            
+            # Step 2.1: Prune highly correlated features to prevent XAI contradiction
+            feature_cols = self.prune_features(df_labeled, feature_cols)
 
             logger.info(f"Training with {len(feature_cols)} features: {feature_cols}")
             X = df_labeled.select(feature_cols).to_numpy()
@@ -101,6 +111,35 @@ class WillingnessTrainer:
             self.save_model(self.model)
 
         logger.info("Training pipeline completed successfully!")
+
+    # ── Feature Pruning ──────────────────────────────────────────────
+
+    def prune_features(self, df: pl.DataFrame, feature_cols: list) -> list:
+        """
+        Identify and remove highly correlated features (Pearson > 0.85) 
+        to ensure distinct SHAP explanations.
+        """
+        if not feature_cols:
+            return []
+
+        logger.info(f"Checking for multicollinearity among {len(feature_cols)} features...")
+        
+        # Calculate correlation matrix
+        corr_matrix = df.select(feature_cols).to_pandas().corr().abs()
+        
+        # Select upper triangle of correlation matrix
+        upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+        
+        # Identify columns to drop
+        to_drop = [column for column in upper.columns if any(upper[column] > 0.85)]
+        
+        if to_drop:
+            logger.warning(f"Dropping {len(to_drop)} redundant features (>0.85 correlation): {to_drop}")
+            mlflow.log_param("pruned_features", ", ".join(to_drop))
+            return [c for c in feature_cols if c not in to_drop]
+        
+        logger.info("No high correlations detected. Proceeding with all features.")
+        return feature_cols
 
     # ── Target Engineering ───────────────────────────────────────────
 

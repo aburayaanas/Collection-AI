@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List
 
+import os
 import polars as pl
 import xgboost as xgb
 
@@ -157,7 +158,8 @@ class WillingnessScorer:
         if latest_path.exists():
             backup_path = latest_path.with_suffix(".parquet.bak")
             logger.warning(f"Existing cache found. Backing up to: {backup_path.name}")
-            latest_path.rename(backup_path)
+            # Use os.replace to overwrite the backup if it already exists (Windows fix)
+            os.replace(latest_path, backup_path)
         
         logger.info(f"Caching results to: {cache_path}")
         result_df.write_parquet(cache_path)

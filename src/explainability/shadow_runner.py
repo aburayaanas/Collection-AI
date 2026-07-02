@@ -136,8 +136,8 @@ def run_shap_phase(
             model=model,
             model_type=model_type,
             id_col=id_col,
-            reason_cols="reason_cols",
-            descriptive_col="reason_desc",
+            risk_drivers_col="SHAP_RISK_DRIVERS",
+            positive_drivers_col="SHAP_POSITIVE_DRIVERS",
         )
 
         logger.info(
@@ -177,10 +177,8 @@ def run_shap_phase(
                     f"[SHAP] Inserted {dwh_rows:,} rows into "
                     f"PIO_COLL_AI_MATRIX_RESULTS"
                 )
-            except Exception as db_err:
-                logger.error(
-                    f"[SHAP] DWH insertion failed (non-fatal): {db_err}"
-                )
+            except Exception as e:
+                logger.error(f"[SHAP] Database insertion failed: {e}")
 
         elapsed = time.time() - start
         logger.info(
@@ -221,16 +219,18 @@ def _fetch_previous_shap_data(model_type: str) -> Optional[pl.DataFrame]:
     """
     from src.database.connection import db
 
+    # Select the appropriate column based on model type
+    col_to_check = "WILL_SHAP_EXPLANATION" if model_type.upper() == "WILLINGNESS" else "ABIL_SHAP_EXPLANATION"
+
     query = (
-        "SELECT CUST_INFO_ID, SHAP_RAW_FEATURES "
+        f"SELECT CUST_INFO_ID, {col_to_check} "
         "FROM BI_DWH.PIO_COLL_AI_MATRIX_RESULTS "
-        "WHERE SHAP_MODEL_TYPE = :model_type "
-        "AND SHAP_RAW_FEATURES IS NOT NULL"
+        f"WHERE {col_to_check} IS NOT NULL"
     )
     try:
         with db.get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(query, {"model_type": model_type.upper()})
+            cursor.execute(query)
             rows = cursor.fetchall()
             cursor.close()
 

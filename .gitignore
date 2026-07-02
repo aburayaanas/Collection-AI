@@ -20,6 +20,7 @@ env/
 logs/
 temp/
 *.log
+*.bak
 
 # ML & Data Artifacts
 models/
@@ -35,3 +36,4 @@ build/
 
 # others
 Team/
+scratch/
