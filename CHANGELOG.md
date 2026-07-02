@@ -4,6 +4,13 @@ All notable changes to the Collection AI project will be documented in this file
 
 ---
 
+## [Unreleased] — 2026-07-02
+
+### Changed — Frontend Connection
+- `CollectionCockpit.jsx`: Replaced hardcoded `localhost:8000` URLs with dynamic `window.location.hostname` URLs. This allows the frontend to dynamically connect back to the hosting developer's machine's backend API from other devices on the local network (such as the manager's computer).
+
+---
+
 ## [Unreleased] — 2026-06-04
 
 ### Added — Database Marts Reference Documentation
