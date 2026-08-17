@@ -178,18 +178,18 @@ class ContextualBandit:
         # Sort by score descending
         scored_alternatives.sort(key=lambda x: x.score, reverse=True)
 
-        reason_code = self._build_reason_code(quadrant, best_channel, treatment)
+        decision_reason = self._build_decision_reason(quadrant, best_channel, treatment)
 
         logger.debug(
             f"Bandit decision for {customer.cust_info_id}: "
-            f"channel={best_channel!r}, treatment={treatment!r} | {reason_code}"
+            f"channel={best_channel!r}, treatment={treatment!r} | {decision_reason}"
         )
 
         return NBAOutput(
             cust_info_id=customer.cust_info_id,
             recommended_channel=best_channel,
             recommended_treatment=treatment,
-            reason_code=reason_code,
+            decision_reason=decision_reason,
             scored_alternatives=scored_alternatives
         )
 
@@ -241,9 +241,9 @@ class ContextualBandit:
             raise ValueError(f"Unrecognised quadrant '{quadrant}'.")
         return mapping[quadrant].value
 
-    # ── Reason Code Builder ──────────────────────────────────────────
+    # ── Decision Reason Builder ──────────────────────────────────────────
 
-    def _build_reason_code(
+    def _build_decision_reason(
         self, quadrant: str, channel: str, treatment: str
     ) -> str:
         policy_label = "SOFT_TOUCH" if quadrant in SOFT_QUADRANTS else "ESCALATION"

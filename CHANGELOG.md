@@ -4,6 +4,40 @@ All notable changes to the Collection AI project will be documented in this file
 
 ---
 
+## [Unreleased] — 2026-08-17
+
+### Enhanced — Bulletproof Narrative API & Caching Layer
+- `src/api/narrative_service.py`: 
+  - Implemented strict Zero-Error-Caching policy ensuring errors and failures never overwrite `PENDING` states in the database.
+  - Added smart cache validation to detect and auto-regenerate previously corrupted or truncated narrative entries.
+  - Added support for `force_regenerate=True` query parameter to allow manual re-generation on demand.
+  - Robust handling of reasoning models, markdown code fences, and empty content fallbacks.
+- `src/explainability/llm_system_prompt.md`: Streamlined system prompt to eliminate scratchpad token bloat, enforce markdown output, and prevent models from emitting incomplete/broken JSON.
+- `CollectionCockpit.jsx`: Updated frontend narrative generation trigger to utilize `force_regenerate=true` and cleanly surface server/LLM failures in the UI error banner.
+
+---
+
+## [Unreleased] — 2026-08-16
+
+### Fixed — Narrative Service LLM Handling
+- `src/api/narrative_service.py`: Increased `max_tokens` to 3,000 to give local reasoning models (such as Qwen3/DeepSeek) ample headroom to complete internal thinking. Added fallback support for `reasoning_content` if `content` is empty, and added a safeguard preventing empty narrative strings from being saved to the database.
+
+---
+
+## [Unreleased] — 2026-08-12
+
+### Added — QA Release Notes Documentation
+- `docs/release notes/Collection_AI_Table_and_Procedure_Descriptions.xlsx`: Generated a professional corporate-formatted Excel catalog mapping all 6 major database tables and the 4 primary PL/SQL procedures (along with their registered `PIO_LABELS` IDs) used in the Collection AI system. Includes full English and Arabic descriptions, schema ownership, and system roles to finalize QA release requirements.
+
+---
+
+## [Unreleased] — 2026-08-06
+
+### Changed — Database Schema Alignment
+- Renamed the column `REASON_CODE` to `DECISION_REASON` (and `reason_code` variables to `decision_reason`) across the NBA engine (`schemas.py`, `orchestrator.py`, `bandit.py`, `guardrails.py`), database repository (`repository.py`), execution script (`main.py`), and related DDL and documentation. This aligns the naming standard with database design guidelines since the column stores structured decision text rather than numeric lookup codes.
+
+---
+
 ## [Unreleased] — 2026-07-02
 
 ### Changed — Frontend Connection
