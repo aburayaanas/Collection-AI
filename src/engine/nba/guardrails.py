@@ -226,7 +226,7 @@ class RuleEngine:
             cust_info_id=customer.cust_info_id,
             recommended_channel="None",
             recommended_treatment=Treatment.SPECIAL_HANDLING.value,
-            reason_code=reason,
+            decision_reason=reason,
         )
 
         return GuardrailResult(

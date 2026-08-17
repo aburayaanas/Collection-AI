@@ -1,3 +1,9 @@
+w
+
+Thank you very much for the offer — I'm genuinely excited about the opportunity and role, and I'm keen to move forward.
+
+I wanted to check on one point regarding the joining date. The offer lists  **13 Sep 2026** , but I would need a few extra days to properly close things out with my current employer and hand over my responsibilities. Would it be possible to shift my start date to **16 Sep 2026** instead?
+
 # Database Schema & Data Dictionary
 
 ## Matrix Results Table
@@ -135,7 +141,7 @@ CREATE TABLE PIO_COLL_AI_RL_FEEDBACK (
     CUSTOMER_OUTCOME        VARCHAR2(50)    NOT NULL,
     BANDIT_REWARD_SCORE     NUMBER(5, 2)        NULL,
     CREATED_AT              TIMESTAMP       DEFAULT CURRENT_TIMESTAMP NOT NULL,
-    
+  
     CONSTRAINT PK_COLL_AI_RL_FEEDBACK 
         PRIMARY KEY (DAY_DATE, INST_CODE, COUNTRY_CODE, CUST_INFO_ID),
     CONSTRAINT CHK_RL_FEEDBACK_OVERRIDE 
@@ -148,18 +154,18 @@ COMMENT ON TABLE BI_DWH.PIO_COLL_AI_RL_FEEDBACK
 
 ### RL Feedback Data Dictionary
 
-| Column | Description | Details / Logic |
-| :--- | :--- | :--- |
-| `DAY_DATE` | Business execution date | The business date the action was executed. |
-| `INST_CODE` | Institution code | Institution code identifier (part of tenant key). |
-| `COUNTRY_CODE` | Country code | Country code identifier (part of tenant key). |
-| `CUST_INFO_ID` | Customer Information ID | The unique customer identifier. |
-| `AI_RECOMMENDED_CHANNEL` | Suggested channel | The original outreach channel suggested by the AI (e.g., Email, Call). |
-| `AGENT_OVERRIDE_FLAG` | Override indicator | Binary 1 (Overridden) or 0 (Accepted). Indicates if the human agent changed the AI recommendation. |
-| `OVERRIDE_REASON_CODE` | Override reason justification | The CBJ justification code if the agent overrode the AI (e.g., 'Force Majeure'). |
-| `ACTUAL_CHANNEL_USED` | Executed channel | The outreach channel that was ultimately executed. |
-| `CUSTOMER_OUTCOME` | Customer reaction | The real-world result (e.g., 'IGNORED', 'KEPT_PTP', 'BROKEN_PTP', 'PAID_IN_FULL'). |
-| `BANDIT_REWARD_SCORE` | Bandit reward score | The computed mathematical reward (+1, -1, etc.) fed back to train the model weights. |
+| Column                     | Description                   | Details / Logic                                                                                    |
+| :------------------------- | :---------------------------- | :------------------------------------------------------------------------------------------------- |
+| `DAY_DATE`               | Business execution date       | The business date the action was executed.                                                         |
+| `INST_CODE`              | Institution code              | Institution code identifier (part of tenant key).                                                  |
+| `COUNTRY_CODE`           | Country code                  | Country code identifier (part of tenant key).                                                      |
+| `CUST_INFO_ID`           | Customer Information ID       | The unique customer identifier.                                                                    |
+| `AI_RECOMMENDED_CHANNEL` | Suggested channel             | The original outreach channel suggested by the AI (e.g., Email, Call).                             |
+| `AGENT_OVERRIDE_FLAG`    | Override indicator            | Binary 1 (Overridden) or 0 (Accepted). Indicates if the human agent changed the AI recommendation. |
+| `OVERRIDE_REASON_CODE`   | Override reason justification | The CBJ justification code if the agent overrode the AI (e.g., 'Force Majeure').                   |
+| `ACTUAL_CHANNEL_USED`    | Executed channel              | The outreach channel that was ultimately executed.                                                 |
+| `CUSTOMER_OUTCOME`       | Customer reaction             | The real-world result (e.g., 'IGNORED', 'KEPT_PTP', 'BROKEN_PTP', 'PAID_IN_FULL').                 |
+| `BANDIT_REWARD_SCORE`    | Bandit reward score           | The computed mathematical reward (+1, -1, etc.) fed back to train the model weights.               |
 
 ### to do list
 

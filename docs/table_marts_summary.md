@@ -123,7 +123,7 @@ Saves compliance guardrail-filtered recommendations, reason codes, alternative r
 * **`PIO_COLL_AI_NBA_ACTIONS.CUST_INFO_ID`** (Customer Information ID / رقم تعريف العميل)
 * **`PIO_COLL_AI_NBA_ACTIONS.RECOMMENDED_CHANNEL`** (Recommended Outreach Channel / قناة التواصل الموصى بها)
 * **`PIO_COLL_AI_NBA_ACTIONS.RECOMMENDED_OFFER`** (Recommended Treatment / الإجراء أو العرض الموصى به)
-* **`PIO_COLL_AI_NBA_ACTIONS.REASON_CODE`** (Decision Audit Reason Code / رمز سبب القرار للتتبع)
+* **`PIO_COLL_AI_NBA_ACTIONS.DECISION_REASON`** (Decision Audit Reason / سبب القرار للتتبع)
 * **`PIO_COLL_AI_NBA_ACTIONS.AI_PAYLOAD`** (Narrative Context JSON Payload / تفاصيل سياق العميل للذكاء الاصطناعي)
 * **`PIO_COLL_AI_NBA_ACTIONS.AI_NARRATIVE`** (Executive Narrative Summary / الملخص التنفيذي الذكي للمحصل)
 * **`PIO_COLL_AI_NBA_ACTIONS.SCORED_ALTERNATIVES`** (Alternative Scored Decisions / القرارات البديلة المحتسبة)

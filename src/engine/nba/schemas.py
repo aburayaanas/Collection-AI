@@ -197,7 +197,7 @@ class NBAOutput(BaseModel):
             PIO_COMMUNICATE_TYPE.
         recommended_treatment (str): The treatment to apply. Maps to
             PIO_ACTIVITY_DEF action sequences.
-        reason_code (str): Human-readable audit code explaining why
+        decision_reason (str): Human-readable audit text explaining why
             this action was recommended (e.g., "EXCLUDED:LEGAL",
             "BANDIT:Q1_SMS_PTP"). Used for regulatory reporting
             and model governance.
@@ -220,9 +220,9 @@ class NBAOutput(BaseModel):
         ...,
         description="Selected treatment action.",
     )
-    reason_code: str = Field(
+    decision_reason: str = Field(
         ...,
-        description="Audit-trail code for regulatory reporting.",
+        description="Audit-trail text for regulatory reporting.",
     )
     scored_alternatives: List[ScoredAlternative] = Field(
         default_factory=list,

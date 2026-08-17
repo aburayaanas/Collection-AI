@@ -259,7 +259,7 @@ def run_nba_steps(logger, matrix_df: pl.DataFrame | None) -> None:
     # ── Log summary ───────────────────────────────────────────────────
     total = df_nba_output.height
     error_rows = df_nba_output.filter(
-        pl.col("REASON_CODE").str.starts_with("ERROR:")
+        pl.col("DECISION_REASON").str.starts_with("ERROR:")
     ).height
     logger.info(
         f"NBA results | total={total:,}, "

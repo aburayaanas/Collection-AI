@@ -376,7 +376,7 @@ class CollectionRepository:
             df (pl.DataFrame): Output DataFrame from ``NBAOrchestrator.process_batch()``.
                 Must contain columns: ``CUST_INFO_ID``, ``DAY_DATE``,
                 ``INST_CODE``, ``COUNTRY_CODE``, ``RECOMMENDED_CHANNEL``,
-                ``RECOMMENDED_OFFER``, ``REASON_CODE``.
+                ``RECOMMENDED_OFFER``, ``DECISION_REASON``.
 
         Raises:
             Exception: Re-raised after rollback if the entire batch fails
@@ -392,7 +392,7 @@ class CollectionRepository:
             "CUST_INFO_ID",
             "RECOMMENDED_CHANNEL",
             "RECOMMENDED_OFFER",
-            "REASON_CODE",
+            "DECISION_REASON",
             "AI_PAYLOAD",
             "SCORED_ALTERNATIVES",
         ]).to_dicts()
@@ -409,7 +409,7 @@ class CollectionRepository:
                 UPDATE SET
                     RECOMMENDED_CHANNEL = :RECOMMENDED_CHANNEL,
                     RECOMMENDED_OFFER   = :RECOMMENDED_OFFER,
-                    REASON_CODE         = :REASON_CODE,
+                    DECISION_REASON     = :DECISION_REASON,
                     AI_PAYLOAD          = :AI_PAYLOAD,
                     SCORED_ALTERNATIVES = :SCORED_ALTERNATIVES,
                     AI_NARRATIVE        = 'PENDING',
@@ -422,7 +422,7 @@ class CollectionRepository:
                     CUST_INFO_ID,
                     RECOMMENDED_CHANNEL,
                     RECOMMENDED_OFFER,
-                    REASON_CODE,
+                    DECISION_REASON,
                     AI_PAYLOAD,
                     SCORED_ALTERNATIVES,
                     AI_NARRATIVE,
@@ -436,7 +436,7 @@ class CollectionRepository:
                     :CUST_INFO_ID,
                     :RECOMMENDED_CHANNEL,
                     :RECOMMENDED_OFFER,
-                    :REASON_CODE,
+                    :DECISION_REASON,
                     :AI_PAYLOAD,
                     :SCORED_ALTERNATIVES,
                     'PENDING',

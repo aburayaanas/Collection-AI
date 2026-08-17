@@ -30,7 +30,7 @@ Pipeline per customer:
 Fault Isolation:
     A single malformed row (bad data type, missing field, etc.) logs
     an ERROR and writes a sentinel ``NBAOutput`` with
-    reason_code="ERROR:PROCESSING_FAILED" for that customer.
+    decision_reason="ERROR:PROCESSING_FAILED" for that customer.
     The batch continues uninterrupted.
 """
 
@@ -64,7 +64,7 @@ _REASON_ERROR: str = "ERROR:PROCESSING_FAILED"
 _COL_CUST_ID: str = "CUST_INFO_ID"
 _COL_CHANNEL: str = "RECOMMENDED_CHANNEL"
 _COL_OFFER: str = "RECOMMENDED_OFFER"
-_COL_REASON: str = "REASON_CODE"
+_COL_REASON: str = "DECISION_REASON"
 
 
 class NBAOrchestrator:
@@ -133,12 +133,12 @@ class NBAOrchestrator:
         Returns:
             NBAOutput: A fully validated recommendation record.
                 Always returned — never raises. Error cases are
-                captured in ``reason_code``.
+                captured in ``decision_reason``.
 
         Decision tree:
 
         - **ValidationError** → sentinel output with
-          ``reason_code="ERROR:PROCESSING_FAILED"``.
+          ``decision_reason="ERROR:PROCESSING_FAILED"``.
         - **Excluded customer** → channel=``"None"``,
           treatment=``"Special Handling"``,
           reason=``"EXCLUDED:<STATUS>"``.
@@ -146,7 +146,7 @@ class NBAOrchestrator:
           treatment=``"Wait"``,
           reason=``"CHANNEL_FREQUENCY_CAP_REACHED"``.
         - **Channels available** → bandit-selected output with
-          structured ``reason_code``.
+          structured ``decision_reason``.
         """
         cust_id: str = raw_data.get("cust_info_id", "UNKNOWN")
 
@@ -187,7 +187,7 @@ class NBAOrchestrator:
                 cust_info_id=customer.cust_info_id,
                 recommended_channel=_CHANNEL_NONE,
                 recommended_treatment=Treatment.PTP.value,  # lightest treatment as placeholder
-                reason_code=_REASON_CAP_REACHED,
+                decision_reason=_REASON_CAP_REACHED,
             )
 
         # ── Step 3c: Delegate to bandit ──────────────────────────────
@@ -232,7 +232,7 @@ class NBAOrchestrator:
                 | CUST_INFO_ID          | Utf8   |
                 | RECOMMENDED_CHANNEL   | Utf8   |
                 | RECOMMENDED_OFFER     | Utf8   |
-                | REASON_CODE           | Utf8   |
+                | DECISION_REASON       | Utf8   |
 
         Raises:
             ValueError: If the input DataFrame is ``None`` or empty.
@@ -281,12 +281,12 @@ class NBAOrchestrator:
                 _COL_CUST_ID:  output.cust_info_id,
                 _COL_CHANNEL:  output.recommended_channel,
                 _COL_OFFER:    output.recommended_treatment,
-                _COL_REASON:   output.reason_code,
+                _COL_REASON:   output.decision_reason,
                 "AI_PAYLOAD":  ai_payload,
                 "SCORED_ALTERNATIVES": scored_alts_json,
             })
 
-            if output.reason_code.startswith("ERROR:"):
+            if output.decision_reason.startswith("ERROR:"):
                 error_count += 1
 
         result_df = pl.DataFrame(
@@ -324,7 +324,7 @@ class NBAOrchestrator:
 
         Ensures the batch DataFrame always has a record for every
         input customer, even when processing fails. The error detail
-        is embedded in ``reason_code`` for downstream triage.
+        is embedded in ``decision_reason`` for downstream triage.
 
         Args:
             cust_id (str): Customer identifier, used as the DB key.
@@ -335,11 +335,11 @@ class NBAOrchestrator:
         Returns:
             NBAOutput: Sentinel output with channel=``"None"``,
                 treatment=``"Special Handling"``, and
-                ``reason_code="ERROR:PROCESSING_FAILED:<ExcType>"``.
+                ``decision_reason="ERROR:PROCESSING_FAILED:<ExcType>"``.
         """
         return NBAOutput(
             cust_info_id=cust_id,
             recommended_channel=_CHANNEL_NONE,
             recommended_treatment=Treatment.SPECIAL_HANDLING.value,
-            reason_code=f"{_REASON_ERROR}:{type(exc).__name__}",
+            decision_reason=f"{_REASON_ERROR}:{type(exc).__name__}",
         )
