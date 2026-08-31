@@ -57,10 +57,10 @@ def get_snap_date(inst_code: str, country_code: str) -> str:
         RuntimeError: If the SNAP_DATE function fails or returns no result.
             The pipeline MUST NOT continue without a valid business date.
     """
-    # Force today's date for dev testing
-    today = datetime.now().strftime('%Y-%m-%d')
-    logger.info(f"DEV MODE: Using today's date for snapshot: {today}")
-    return today
+    # Force test date (18-5-2026) for testing
+    test_date = "2026-05-18"
+    logger.info(f"DEV/TEST MODE: Using test date for snapshot: {test_date}")
+    return test_date
 
     # Original Production Logic:
     sql = "SELECT TO_CHAR(SNAP_DATE(:1, :2), 'YYYY-MM-DD') FROM DUAL"
