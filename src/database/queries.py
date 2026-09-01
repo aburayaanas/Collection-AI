@@ -57,12 +57,16 @@ def get_snap_date(inst_code: str, country_code: str) -> str:
         RuntimeError: If the SNAP_DATE function fails or returns no result.
             The pipeline MUST NOT continue without a valid business date.
     """
-    # Force test date (18-5-2026) for testing
-    test_date = "2026-05-18"
-    logger.info(f"DEV/TEST MODE: Using test date for snapshot: {test_date}")
-    return test_date
+    from src.core.config import settings
 
-    # Original Production Logic:
+    if settings.SNAP_DATE_OVERRIDE:
+        logger.warning(
+            f"SNAP_DATE_OVERRIDE is set — using fixed date "
+            f"{settings.SNAP_DATE_OVERRIDE} instead of live SNAP_DATE(). "
+            f"This MUST be unset in production (see .env / Configuration app)."
+        )
+        return settings.SNAP_DATE_OVERRIDE
+
     sql = "SELECT TO_CHAR(SNAP_DATE(:1, :2), 'YYYY-MM-DD') FROM DUAL"
     
     try:

@@ -4,7 +4,24 @@ All notable changes to the Collection AI project will be documented in this file
 
 ---
 
-## [Unreleased] — 2026-08-17
+## [Unreleased] — 2026-08-31
+
+### Added — Scheduler Service, Configuration App, and PyInstaller Packaging
+
+- `src/scheduler/`: New package — `jobstore.py` (multiple-times-a-day schedule persistence, each entry with its own `MODE`/`MODEL_SCOPE`/`SHAP_SCOPE`), `service.py` (APScheduler `BackgroundScheduler` with config/schedule hot-reload polling and a "run now" flag), `executor.py` (runs one pipeline job, records status), `win_service.py` (pywin32 Windows Service wrapper with install/start/stop/debug verbs and crash auto-restart via `sc failure`).
+- `src/gui_config/`: New CustomTkinter Configuration app (`app.py`) covering every `.env` value across Application/Database/Pipeline/Narrative API tabs, plus Schedule (add/edit/delete jobs, per-job Run Now), Service (install/start/stop with UAC elevation), and Logs (live tail) tabs. `.env` writes are atomic (temp file + replace).
+- `src/core/paths.py`: Centralizes app-data vs. bundled-resource path resolution so both executables agree on one writable location (`%PROGRAMDATA%\CollectionAI` when frozen) regardless of install folder or a Windows Service's `System32` working directory.
+- `src/core/retention.py`: Prunes old model/cache artifacts after each run (scoring/training previously wrote a new timestamped file forever with no cleanup), protecting whatever the `latest_*.json` pointers currently reference.
+- `packaging/collectionai_service.spec`, `packaging/collectionai_config.spec`, `scripts/build_exes.ps1`: PyInstaller build configuration for the two executables. Verified end-to-end: both launch standalone, the Service exe correctly creates its app-data directory under `%PROGRAMDATA%` and starts the scheduler when frozen.
+
+### Fixed — Production-readiness issues found while building the above
+
+- `src/database/queries.py`: Removed a hardcoded `2026-05-18` snapshot-date override that silently bypassed the real Oracle `SNAP_DATE()` call in every run. Replaced with an explicit, opt-in `SNAP_DATE_OVERRIDE` setting (blank by default) surfaced with a clear production warning in both `.env.example` and the Configuration app.
+- `src/core/config.py`: `DB_USER`/`DB_PASSWORD`/`DB_DSN` are no longer required at import time — they defaulted to `Field(...)`, which meant *any* process importing `Settings` (including the Configuration app meant to collect these values on first install) crashed before a fresh install could even be configured. `src/database/connection.py` now checks for blank credentials itself and raises a clear, actionable error at connection time instead.
+- `src/core/config.py`: Added `reload_settings()` so the long-lived scheduler process picks up `.env` edits without a restart (previously `settings` was a load-once singleton).
+- Path anchoring: `src/core/logger.py`, `src/api/narrative_service.py`, `src/engine/matrix.py`, and `src/main.py`'s model/cache directory arguments all previously used CWD-relative paths (`"models"`, `"data/cache"`, `Path(__file__)`-derived logs dir) that break under a frozen exe / Windows Service whose working directory is `System32`. Now resolved via `src/core/paths.py`.
+
+
 
 ### Enhanced — Bulletproof Narrative API & Caching Layer
 

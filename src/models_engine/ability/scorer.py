@@ -63,8 +63,12 @@ class AbilityScorer:
         
         if not pointer_file.exists():
             raise FileNotFoundError(
-                f"Pointer file not found: {pointer_file}\n"
-                f"Please train a model first by setting MODE=TRAIN"
+                f"No trained Ability model found at: {pointer_file}\n"
+                f"MODEL_SCOPE only picks which models a run touches — it does not "
+                f"train them. Run one job with Mode=TRAIN or Mode=FULL first "
+                f"(Configuration app > Schedule > Run Now, or `python -m src.main` "
+                f"with MODE=TRAIN/FULL in .env) to create this pointer file, then "
+                f"Mode=SCORE jobs will work."
             )
         
         # Read pointer file to get latest model filename

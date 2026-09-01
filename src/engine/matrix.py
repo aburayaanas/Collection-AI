@@ -13,8 +13,9 @@ import polars as pl
 
 from src.core.logger import get_logger
 from src.database.repository import CollectionRepository
-from src.database.queries import get_snap_date  # noqa: F401 — used in production (commented out in dev mode)
+from src.database.queries import get_snap_date
 from src.core.config import settings
+from src.core import paths
 
 logger = get_logger(__name__)
 
@@ -101,10 +102,7 @@ class MatrixEngine:
         # Log quadrant distribution
         self._log_quadrant_distribution(df_final)
         
-        # ==================================================================================
-        # Both Matrix and SHAP now use get_snap_date() to ensure synchronization.
-        # In DEV: Returns today's date (2026).
-        # ==================================================================================
+        # Both Matrix and SHAP use get_snap_date() to ensure synchronization.
         current_day_date = get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
 
         # Read model version from pointer files for audit trail
@@ -137,7 +135,7 @@ class MatrixEngine:
 
         Falls back to 'unknown' if pointer files don't exist.
         """
-        model_dir = Path("models")
+        model_dir = paths.MODELS_DIR
         parts = []
 
         for prefix, pointer_file in [("w", "latest_willingness.json"), ("a", "latest_ability.json")]:

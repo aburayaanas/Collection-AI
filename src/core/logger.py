@@ -6,7 +6,7 @@ Provides structured, production-ready logging for the Collection AI batch job.
 import logging
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
-from pathlib import Path
+from src.core import paths
 from src.core.config import settings
 
 # ── Log Rotation Settings ────────────────────────────────────────────
@@ -32,9 +32,9 @@ def setup_logging() -> logging.Logger:
     # Determine log level based on DEBUG setting
     log_level = logging.DEBUG if settings.DEBUG else logging.INFO
     
-    # Create logs directory if it doesn't exist
-    log_dir = Path(settings.BASE_DIR).parent / "logs"
-    log_dir.mkdir(exist_ok=True)
+    # Writable, fixed location regardless of CWD (a Windows Service's CWD
+    # is System32, not the install folder) — see src/core/paths.py.
+    log_dir = paths.LOGS_DIR
     
     # Generate daily log file name
     today = datetime.now().strftime("%Y-%m-%d")
