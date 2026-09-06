@@ -1,6 +1,5 @@
 import json
 import re
-import os
 import openai
 from openai import OpenAI
 from fastapi import APIRouter, HTTPException, Query
@@ -9,6 +8,7 @@ from typing import Optional
 from src.database.connection import db
 from src.core.config import settings
 from src.core.logger import get_logger
+from src.core import paths
 
 logger = get_logger(__name__)
 
@@ -221,8 +221,8 @@ async def get_narrative(
             if not ai_payload or str(ai_payload).strip() in ("", "None", "NULL"):
                 raise HTTPException(status_code=400, detail="Customer AI_PAYLOAD is empty. Cannot generate narrative.")
 
-            # 3. Load optimized system prompt
-            prompt_path = os.path.join(settings.BASE_DIR, "explainability", "llm_system_prompt.md")
+            # 3. Load optimized system prompt (bundled resource, not app data)
+            prompt_path = paths.resource_path("src", "explainability", "llm_system_prompt.md")
             try:
                 with open(prompt_path, "r", encoding="utf-8") as f:
                     system_prompt = f.read()

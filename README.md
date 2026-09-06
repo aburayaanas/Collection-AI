@@ -46,7 +46,16 @@ BATCH_SIZE=1000
 # Score Thresholds (used for Quadrant assignment)
 WILLINGNESS_THRESHOLD=0.65
 ABILITY_THRESHOLD=0.5
+
+# Artifact retention: how many recent model/cache files to keep before auto-pruning
+RETENTION_KEEP_N=10
+
+# TESTING ONLY — pins the pipeline's business date instead of calling the
+# real Oracle SNAP_DATE(). Leave BLANK in production.
+SNAP_DATE_OVERRIDE=
 ```
+
+> All of the above (plus the LLM/OpenAI settings) can also be edited through `CollectionAI-Config.exe` — see "Production Deployment" (section 6 below).
 
 ### 3. Seed the Database (First Run / Development Only)
 
@@ -102,6 +111,41 @@ curl -X GET "http://localhost:8000/customer/123/narrative?country_code=400&inst_
 
 - **First Call**: Fetches the payload, invokes the local LLM using the strict guardrails in `llm_system_prompt.md`, caches the result back in Oracle as a `CLOB`, and returns `status: "GENERATED"`.
 - **Subsequent Calls**: Instantaneous, pulling directly from the cached database field, returning `status: "CACHED"`.
+
+### 6. Production Deployment (Scheduler Service + Configuration App)
+
+For unattended, scheduled production use there are two Windows executables, built from this repo via PyInstaller, meant to be installed side by side on the target machine:
+
+| Executable                   | What it is                                                                                                                                                  |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `CollectionAI-Config.exe`  | A CustomTkinter GUI for editing every`.env` value, managing the schedule, controlling the Windows Service, and tailing logs. Run this first.              |
+| `CollectionAI-Service.exe` | A Windows Service that runs the pipeline on the configured schedule via APScheduler. Headless — no window, survives logoff/reboot, auto-restarts on crash. |
+
+**First-time setup:**
+
+1. Run `CollectionAI-Config.exe`. Fill in the **Database** tab (and any other settings you need) and click **Save Configuration**.
+2. Go to the **Schedule** tab and click **+ Add Job** to add one or more scheduled runs — each job has its own time, days, `MODE`, `MODEL_SCOPE`, and `SHAP_SCOPE`, so you can pair a light `SCORE`-only refresh in the morning/evening with a heavier nightly `FULL` (re-training) run.
+3. Go to the **Service** tab and click **Install**, then **Start**. Both require Administrator rights — you'll see a UAC prompt.
+
+Both executables read/write two shared files (`%PROGRAMDATA%\CollectionAI\.env` and `schedule.json`): edits made in the Configuration app take effect in the running service within ~15 seconds, without a restart. The **Logs** tab tails the latest pipeline log directly; the **Service** tab shows the last run's status.
+
+**Building the executables** (from a dev machine with the `.venv` set up):
+
+```powershell
+.\scripts\build_exes.ps1
+```
+
+This produces `dist\CollectionAI-Config.exe` and `dist\CollectionAI-Service.exe`. Copy both into the same folder on the target machine. See `packaging/collectionai_config.spec` and `packaging/collectionai_service.spec` for the PyInstaller build configuration.
+
+**Managing the service manually** (equivalent to the Configuration app's Service tab), from an elevated prompt:
+
+```powershell
+CollectionAI-Service.exe install   # register the Windows Service
+CollectionAI-Service.exe start
+CollectionAI-Service.exe stop
+CollectionAI-Service.exe remove
+CollectionAI-Service.exe debug     # run in the foreground for troubleshooting
+```
 
 ---
 
@@ -211,13 +255,33 @@ PTP (Promise to Pay) | Scheduling and Structuring | Partial Payment | Special Ha
 
 ```
 Collection-AI/
-├── .env                          # Secrets & Config
+├── .env                          # Secrets & Config (dev). In production this lives at
+│                                  # %PROGRAMDATA%\CollectionAI\.env — see src/core/paths.py
 ├── CHANGELOG.md                  # Daily development log
+├── service_app.py                # PyInstaller entry point -> CollectionAI-Service.exe
+├── config_app.py                 # PyInstaller entry point -> CollectionAI-Config.exe
+├── version.txt
+├── packaging/
+│   ├── collectionai_service.spec
+│   └── collectionai_config.spec
 ├── scripts/
+│   ├── build_exes.ps1            # Builds both executables via PyInstaller
 │   └── generate_synthatic_data.py  # Dev-only: seed mart tables with synthetic data
 ├── src/
-│   ├── main.py                   # Pipeline Orchestrator (5-step)
-│   ├── core/                     # Config, Logging, Error Taxonomy, Validation
+│   ├── main.py                   # Pipeline Orchestrator: execute_pipeline() + CLI main()
+│   ├── core/                     # Config, Paths, Logging, Error Taxonomy, Validation, Retention
+│   │   ├── paths.py               # Frozen-exe-aware path resolution (ProgramData vs repo root)
+│   │   ├── config.py              # Settings singleton + reload_settings()
+│   │   └── retention.py           # Prunes old model/cache artifacts after each run
+│   ├── scheduler/                 # APScheduler wiring + Windows Service wrapper
+│   │   ├── jobstore.py             # ScheduledJob model, schedule.json load/save
+│   │   ├── runner.py               # Executes one job, writes status.json
+│   │   ├── service.py              # BackgroundScheduler + config hot-reload watcher
+│   │   └── win_service.py          # pywin32 ServiceFramework (install/start/stop/debug)
+│   ├── gui_config/                 # Configuration app (CustomTkinter)
+│   │   ├── app.py                   # Main window: Database/Pipeline/Narrative/Schedule/Service/Logs tabs
+│   │   ├── env_io.py                # .env field schema + atomic read/write
+│   │   └── service_control.py       # Elevated install/start/stop via the Service exe
 │   ├── database/
 │   │   ├── connection.py         # Oracle connection pool
 │   │   ├── repository.py         # Data access (upsert_matrix_results, upsert_nba_results)
@@ -238,8 +302,8 @@ Collection-AI/
 │   │       ├── bandit.py         # Contextual Bandit decision engine
 │   │       └── orchestrator.py   # Batch controller wiring guardrails + bandit
 │   └── explainability/           # SHAP shadow runner
-├── models/                       # Saved JSON model artifacts & pointer files
-└── data/cache/                   # Intermediate Parquet files (scoring cache)
+├── models/                       # Saved JSON model artifacts & pointer files (auto-pruned)
+└── data/cache/                   # Intermediate Parquet files (scoring cache, auto-pruned)
 ```
 
 ---

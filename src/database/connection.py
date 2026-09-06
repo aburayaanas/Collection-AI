@@ -19,6 +19,13 @@ class OracleDatabase:
             logger.warning("Database pool already initialized.")
             return
 
+        if not settings.DB_USER or not settings.DB_DSN or not settings.DB_PASSWORD.get_secret_value():
+            raise RuntimeError(
+                "Database credentials are not configured (DB_USER/DB_PASSWORD/DB_DSN). "
+                "Open the Configuration app's Database tab and save valid credentials, "
+                "or set them in .env directly."
+            )
+
         try:
             self._pool = oracledb.create_pool(
                 user=settings.DB_USER,

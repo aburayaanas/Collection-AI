@@ -1,21 +1,22 @@
 import sys
-from pathlib import Path    # noqa
 from src.database.connection import db
 from src.core.logger import setup_logging, get_logger
 from src.core.taxonomy import ErrorAdvisor
-from src.core.config import settings
+from src.core.config import settings, reload_settings
 from src.core.validation import validate_training_data, validate_scoring_data, validate_matrix_inputs
+from src.core.retention import cleanup_old_artifacts
+from src.core import paths
 from src.database.repository import CollectionRepository
 import polars as pl
 
 # ── Modular Pipeline Steps ──────────────────────────────────────────
 
-def run_training_steps(logger):
+def run_training_steps(logger, model_scope: str | None = None):
     """Execute training for configured scopes."""
     from src.models_engine.willingness.trainer import WillingnessTrainer
     from src.models_engine.ability.trainer import AbilityTrainer
 
-    scope = settings.MODEL_SCOPE.upper()
+    scope = (model_scope or settings.MODEL_SCOPE).upper()
     logger.info(f"=== TRAINING PHASE (Scope: {scope}) ===")
     
     repo = CollectionRepository()
@@ -28,7 +29,7 @@ def run_training_steps(logger):
             df = repo.get_willingness_training_data()
             validate_training_data(df, target_col="TARGET_WILLINGNESS", context="Willingness Training")
             logger.info(f"Training on {df.height:,} records")
-            trainer = WillingnessTrainer(model_dir="models")
+            trainer = WillingnessTrainer(model_dir=str(paths.MODELS_DIR))
             trainer.train(df)
         except Exception as e:
             logger.error(f"Willingness training failed: {e}")
@@ -43,14 +44,14 @@ def run_training_steps(logger):
             validate_training_data(df, target_col="TARGET_ABILITY", context="Ability Training")
             logger.info(f"Training on {df.height:,} records")
             
-            trainer = AbilityTrainer(model_dir="models")
+            trainer = AbilityTrainer(model_dir=str(paths.MODELS_DIR))
             trainer.train(df)
             
         except Exception as e:
             logger.error(f"Ability training failed: {e}")
             raise
 
-def run_scoring_steps(logger) -> dict:
+def run_scoring_steps(logger, model_scope: str | None = None) -> dict:
     """
     Execute scoring for configured scopes.
     Returns dictionary of cache paths for matrix integration.
@@ -58,7 +59,7 @@ def run_scoring_steps(logger) -> dict:
     from src.models_engine.willingness.scorer import WillingnessScorer
     from src.models_engine.ability.scorer import AbilityScorer
 
-    scope = settings.MODEL_SCOPE.upper()
+    scope = (model_scope or settings.MODEL_SCOPE).upper()
     logger.info(f"=== SCORING PHASE (Scope: {scope}) ===")
     
     repo = CollectionRepository()
@@ -71,7 +72,7 @@ def run_scoring_steps(logger) -> dict:
             # Use repository to fetch data with date filter
             df = repo.get_willingness_training_data()
             validate_scoring_data(df, context="Willingness Scoring")
-            scorer = WillingnessScorer(model_dir="models", cache_dir="data/cache")
+            scorer = WillingnessScorer(model_dir=str(paths.MODELS_DIR), cache_dir=str(paths.CACHE_DIR))
             path = scorer.score(df)
             cache_paths["willingness"] = path
             logger.info(f"Willingness scores cached: {path}")
@@ -86,7 +87,7 @@ def run_scoring_steps(logger) -> dict:
             # Use repository to fetch data with date filter
             df = repo.get_ability_training_data()
             validate_scoring_data(df, context="Ability Scoring")
-            scorer = AbilityScorer(model_dir="models", cache_dir="data/cache")
+            scorer = AbilityScorer(model_dir=str(paths.MODELS_DIR), cache_dir=str(paths.CACHE_DIR))
             path = scorer.score(df)
             cache_paths["ability"] = path
             logger.info(f"Ability scores cached: {path}")
@@ -270,13 +271,13 @@ def run_nba_steps(logger, matrix_df: pl.DataFrame | None) -> None:
     repo.upsert_nba_results(df_nba_output)
 
 
-def run_shap_steps(logger):
+def run_shap_steps(logger, shap_scope: str | None = None):
     """Execute SHAP explanations for configured scopes (Reads from DB/Cache re-scoring)."""
     from src.models_engine.willingness.scorer import WillingnessScorer
     from src.models_engine.ability.scorer import AbilityScorer
     from src.explainability.shadow_runner import run_shap_phase, ExplainabilityConfig
 
-    scope = settings.SHAP_SCOPE.upper()
+    scope = (shap_scope or settings.SHAP_SCOPE).upper()
     if scope == "NONE":
         logger.info("SHAP phase skipped (SHAP_SCOPE=NONE)")
         return
@@ -299,7 +300,7 @@ def run_shap_steps(logger):
             df = repo.get_willingness_training_data()
             
             # We need the model object
-            scorer = WillingnessScorer(model_dir="models", cache_dir="data/cache")
+            scorer = WillingnessScorer(model_dir=str(paths.MODELS_DIR), cache_dir=str(paths.CACHE_DIR))
             # We assume scorer loads the model on init or we force it
             if not hasattr(scorer, 'model') or scorer.model is None:
                  scorer.load_model()
@@ -320,7 +321,7 @@ def run_shap_steps(logger):
             # Use repository to fetch data with date filter
             df = repo.get_ability_training_data()
             
-            scorer = AbilityScorer(model_dir="models", cache_dir="data/cache")
+            scorer = AbilityScorer(model_dir=str(paths.MODELS_DIR), cache_dir=str(paths.CACHE_DIR))
             if not hasattr(scorer, 'model') or scorer.model is None:
                  scorer.load_model()
 
@@ -335,31 +336,48 @@ def run_shap_steps(logger):
 
 # ── Main Entry Point ────────────────────────────────────────────────
 
-def main():
-    """Main orchestrator."""
+def execute_pipeline(mode: str, model_scope: str | None = None, shap_scope: str | None = None) -> None:
+    """
+    Run one full pipeline execution for the given mode/scope.
+
+    This is the callable the scheduler service invokes directly, once per
+    configured time slot, each with its own mode/scope — e.g. a lightweight
+    SCORE-only run in the morning and evening, plus a heavier nightly FULL
+    (re-training) run — without needing separate .env files or a process
+    restart per slot.
+
+    Unlike main(), this raises on fatal failure instead of calling
+    sys.exit(): a scheduler process must survive one job's failure so it
+    can still fire the next one. main() is the one that turns a raised
+    exception into a process exit, for CLI usage.
+    """
     setup_logging()
     logger = get_logger(__name__)
-    
-    mode = settings.MODE.upper()
-    logger.info(f"Starting Pipeline | Mode: {mode} | Scope: {settings.MODEL_SCOPE} | SHAP: {settings.SHAP_SCOPE}")
-    
+
+    mode = mode.upper()
+    logger.info(
+        f"Starting Pipeline | Mode: {mode} | "
+        f"Scope: {model_scope or settings.MODEL_SCOPE} | "
+        f"SHAP: {shap_scope or settings.SHAP_SCOPE}"
+    )
+
     try:
         db.initialize_pool()
-        
+
         # 1. Training (if TRAIN or FULL)
         if mode in ["TRAIN", "FULL"]:
-            run_training_steps(logger)
+            run_training_steps(logger, model_scope)
 
         # 2. Scoring + Matrix + SHAP (if SCORE or FULL)
         if mode in ["SCORE", "FULL"]:
             # A. Scoring
-            cache_paths = run_scoring_steps(logger)
-            
+            cache_paths = run_scoring_steps(logger, model_scope)
+
             # B. Matrix Integration (ONLY if both are trained/scored)
             matrix_df = run_matrix_integration(logger, cache_paths)
-            
+
             # C. SHAP (After Matrix, so rows exist for UPDATE)
-            run_shap_steps(logger)
+            run_shap_steps(logger, shap_scope)
 
             # D. NBA (After Matrix; isolated so failure doesn't corrupt Matrix)
             try:
@@ -368,14 +386,27 @@ def main():
                 logger.error(
                     f"NBA phase failed — Matrix results are safe: {nba_exc}"
                 )
-            
+
+    finally:
+        db.close_pool()
+        try:
+            cleanup_old_artifacts(logger)
+        except Exception as cleanup_exc:
+            logger.warning(f"Artifact retention cleanup failed (non-fatal): {cleanup_exc}")
+        logger.info("Pipeline Finished.")
+
+
+def main():
+    """CLI entry point (``python -m src.main``). Reads mode/scope from .env."""
+    reload_settings()
+    logger = get_logger(__name__)
+    try:
+        execute_pipeline(settings.MODE, settings.MODEL_SCOPE, settings.SHAP_SCOPE)
     except Exception as e:
         diagnostic = ErrorAdvisor.analyze(e)
         logger.critical(f"FATAL PIPELINE ERROR:\n{diagnostic}")
         sys.exit(1)
-    finally:
-        db.close_pool()
-        logger.info("Pipeline Finished.")
+
 
 if __name__ == "__main__":
     main()
