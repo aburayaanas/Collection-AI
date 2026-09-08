@@ -232,12 +232,15 @@ class ContextualBandit:
             if is_better:
                 best_score = score
                 best_channel = channel.value
+            rate, rate_type = self._get_channel_rate_info(channel.value, customer)
             scored_alternatives.append(
                 ScoredAlternative(
                     channel=channel.value,
                     score=score,
                     is_selected=False,
                     reasoning=reasoning,
+                    response_rate=rate,
+                    response_rate_type=rate_type,
                 )
             )
 
@@ -247,6 +250,23 @@ class ContextualBandit:
 
         scored_alternatives.sort(key=lambda a: a.score, reverse=True)
         return best_channel, scored_alternatives
+
+    @staticmethod
+    def _get_channel_rate_info(
+        channel_val: str, customer: CustomerState
+    ) -> tuple[Optional[float], Optional[str]]:
+        """Extracts factual response rate and type (ACTUAL vs ESTIMATED) for a channel."""
+        if channel_val == Channel.OUTGOING_CALL.value:
+            return customer.call_response_rate, "ACTUAL"
+        elif channel_val == Channel.FIELD_VISIT.value:
+            return customer.field_visit_response_rate, "ACTUAL"
+        elif channel_val == Channel.SMS.value:
+            return customer.sms_estimated_response_rate, "ESTIMATED"
+        elif channel_val == Channel.EMAIL.value:
+            return customer.email_estimated_response_rate, "ESTIMATED"
+        elif channel_val == Channel.DUNNING_LETTER.value:
+            return customer.letter_estimated_response_rate, "ESTIMATED"
+        return None, None
 
     def _score_channel(
         self,
@@ -341,12 +361,15 @@ class ContextualBandit:
         scored_alternatives: List[ScoredAlternative] = []
         for channel_value, raw in raw_scores.items():
             score_100 = 50 if spread == 0 else round(100 * (raw - lo) / spread)
+            rate, rate_type = self._get_channel_rate_info(channel_value, customer)
             scored_alternatives.append(
                 ScoredAlternative(
                     channel=channel_value,
                     score=int(max(0, min(100, score_100))),
                     is_selected=(channel_value == best_channel),
                     reasoning=f"LinUCB score={raw:.3f} (n={self.reward_tracker.sample_count(channel_value)} real obs.)",
+                    response_rate=rate,
+                    response_rate_type=rate_type,
                 )
             )
         scored_alternatives.sort(key=lambda a: a.score, reverse=True)

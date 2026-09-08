@@ -224,6 +224,11 @@ class CollectionRepository:
             "CURRENT_ARREARS_JOD":        pl.Float64,
             "ACCRUED_INTEREST_JOD":       pl.Float64,
             "LATE_FEES_JOD":              pl.Float64,
+            "CALL_RESPONSE_RATE":         pl.Float64,
+            "FIELD_VISIT_RESPONSE_RATE":  pl.Float64,
+            "SMS_ESTIMATED_RESPONSE_RATE": pl.Float64,
+            "EMAIL_ESTIMATED_RESPONSE_RATE": pl.Float64,
+            "LETTER_ESTIMATED_RESPONSE_RATE": pl.Float64,
             "AGE":                        pl.Int64,
         }
 

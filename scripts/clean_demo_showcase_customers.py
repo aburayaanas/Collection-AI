@@ -5,7 +5,8 @@ Ensures:
 - 48618400 (Q1 Low Risk): 0.04 avoidance, 0 rejections -> no evasive/liquidity signals, high will/ability, Email PTP.
 - 10617433 (Q2 Vulnerable): 0.12 avoidance, 2 rejections, 2450.0 inflow variance -> payment rejection & liquidity signals, NO evasion, Email Restructuring.
 - 10017292 (Q4 High Risk): 0.88 avoidance, 4 rejections, 3 broken PTPs -> contact failure & evasive pattern + payment rejection & liquidity, Field Visit escalation.
-- Clean ASCII strings without encoding artifacts ().
+- Clean ASCII strings without encoding artifacts.
+- Calibrated factual channel response rates (ACTUAL for calls/field visits, ESTIMATED for SMS/email/letters).
 - Pre-caches audited 5-section executive narratives in AI_NARRATIVE for instant, bulletproof demo presentation.
 """
 
@@ -36,6 +37,11 @@ SHOWCASE_CONFIGS = {
         "days_since_rpc": 3,
         "ptp_reliability": 0.95,
         "inflow_variance": 120.0,
+        "call_response_rate": 0.78,
+        "field_visit_response_rate": 0.85,
+        "sms_estimated_response_rate": 0.15,
+        "email_estimated_response_rate": 0.12,
+        "letter_estimated_response_rate": 0.20,
         "narrative": """### SECTION 1 — IDENTITY & COMPLIANCE GATE
 - **KYC Anchor:** Rami Hassan Awad (CIF-48618400), Jordanian / Resident Mass retail / Salaried customer employed at Orange (verified), 9 yr 7 mo tenure.
 - **KYC Status & Gate:** KYC is Up to date. Verified income is JOD 1,897/mo (last verified 11 months ago). Compliance gate is clear; all standard settlement arrangements and forbearance options are legally authorized.
@@ -79,6 +85,11 @@ Decision governed by CollectIQ-Matrix-Bandit v3.1.4 (validated 2026-02-28, Gini 
         "days_since_rpc": 5,
         "ptp_reliability": 0.85,
         "inflow_variance": 2450.0,
+        "call_response_rate": 0.65,
+        "field_visit_response_rate": 0.70,
+        "sms_estimated_response_rate": 0.12,
+        "email_estimated_response_rate": 0.09,
+        "letter_estimated_response_rate": 0.15,
         "narrative": """### SECTION 1 — IDENTITY & COMPLIANCE GATE
 - **KYC Anchor:** Ahmed Ahmed Mansour (CIF-10617433), Jordanian / Resident Mass retail / Self-employed customer operating under Self / Trade License (verified), 7 yr 0 mo tenure.
 - **KYC Status & Gate:** KYC is Up to date. Verified income is JOD 2,316/mo (last verified 4 months ago). Compliance gate is clear; agent is fully authorized to propose formal restructuring and temporary payment moratoriums.
@@ -125,6 +136,11 @@ Decision governed by CollectIQ-Matrix-Bandit v3.1.4 (validated 2026-02-28, Gini 
         "days_since_rpc": 60,
         "ptp_reliability": 0.10,
         "inflow_variance": 3800.0,
+        "call_response_rate": 0.08,
+        "field_visit_response_rate": 0.35,
+        "sms_estimated_response_rate": 0.04,
+        "email_estimated_response_rate": 0.02,
+        "letter_estimated_response_rate": 0.10,
         "narrative": """### SECTION 1 — IDENTITY & COMPLIANCE GATE
 - **KYC Anchor:** Fatima Nour Khoury (CIF-10017292), Jordanian / Resident Mass retail / Salaried customer employed at Arab Bank (verified), 8 yr 2 mo tenure.
 - **KYC Status & Gate:** KYC is Up to date. Verified income is JOD 1,992/mo (last verified 2 months ago). Compliance gate is clear for legal and field operations.
@@ -177,17 +193,25 @@ def clean_demo_customers():
             for cid, cfg in SHOWCASE_CONFIGS.items():
                 print(f"\n--- Processing Customer {cid} ({cfg['quadrant']}) ---")
                 
-                # 1. Update CONTEXT_MART (clean strings & calibrated indices)
+                # 1. Update CONTEXT_MART (clean strings, calibrated indices & factual response rates)
                 cur.execute("""
                     UPDATE BI_DWH.PIO_COLL_AI_NBA_CONTEXT_MART
                     SET CONTACT_AVOIDANCE_INDEX = :cai,
                         PAYMENT_REJECTION_FREQ = :prf,
                         CUSTOMER_SEGMENT = :seg,
                         NATIONALITY_RESIDENCY = :nat,
-                        PRODUCTS_HELD = :prod
+                        PRODUCTS_HELD = :prod,
+                        CALL_RESPONSE_RATE = :crr,
+                        FIELD_VISIT_RESPONSE_RATE = :fvr,
+                        SMS_ESTIMATED_RESPONSE_RATE = :srr,
+                        EMAIL_ESTIMATED_RESPONSE_RATE = :err,
+                        LETTER_ESTIMATED_RESPONSE_RATE = :lrr
                     WHERE CUST_INFO_ID = :cid AND DAY_DATE = TO_DATE(:dt, 'YYYY-MM-DD')
                 """, cai=cfg["contact_avoidance"], prf=cfg["payment_rejection_freq"],
                      seg=cfg["segment"], nat=cfg["nationality"], prod=cfg["products"],
+                     crr=cfg["call_response_rate"], fvr=cfg["field_visit_response_rate"],
+                     srr=cfg["sms_estimated_response_rate"], err=cfg["email_estimated_response_rate"],
+                     lrr=cfg["letter_estimated_response_rate"],
                      cid=cid, dt=day_date)
 
                 # 2. Update WILLINGNESS_MART
@@ -261,6 +285,11 @@ def clean_demo_customers():
                     sms_sent_this_week=int(raw_record.get("SMS_SENT_THIS_WEEK") or 0),
                     calls_made_today=int(raw_record.get("CALLS_MADE_TODAY") or 0),
                     behavioral_signals=signals,
+                    call_response_rate=cfg["call_response_rate"],
+                    field_visit_response_rate=cfg["field_visit_response_rate"],
+                    sms_estimated_response_rate=cfg["sms_estimated_response_rate"],
+                    email_estimated_response_rate=cfg["email_estimated_response_rate"],
+                    letter_estimated_response_rate=cfg["letter_estimated_response_rate"],
                 )
 
                 bandit = ContextualBandit()
@@ -312,7 +341,7 @@ def clean_demo_customers():
                 })
 
             conn.commit()
-            print("\n>>> All 3 demo showcase customers successfully cleaned and committed to DB! <<<")
+            print("\n>>> All 3 demo showcase customers successfully cleaned, calibrated, and committed to DB! <<<")
 
 
 if __name__ == "__main__":

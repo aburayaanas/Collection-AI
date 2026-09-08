@@ -197,6 +197,32 @@ def generate_dummy_data(num_records: int = NUM_RECORDS):
         accrued_interest_jod = round(current_arrears_jod * random.uniform(0.02, 0.10), 2)
         late_fees_jod = round(random.uniform(15.0, 100.0), 2)
 
+        # ── Channel Response Rates (Factual baseline metrics) ─────────
+        if target_w == 1 and target_a == 1:  # Q1
+            call_response_rate = round(random.uniform(0.70, 0.90), 4)
+            field_visit_response_rate = round(random.uniform(0.75, 0.95), 4)
+            sms_estimated_response_rate = round(random.uniform(0.12, 0.20), 4)
+            email_estimated_response_rate = round(random.uniform(0.10, 0.18), 4)
+            letter_estimated_response_rate = round(random.uniform(0.15, 0.25), 4)
+        elif target_w == 1 and target_a == 0:  # Q2
+            call_response_rate = round(random.uniform(0.55, 0.75), 4)
+            field_visit_response_rate = round(random.uniform(0.60, 0.80), 4)
+            sms_estimated_response_rate = round(random.uniform(0.10, 0.15), 4)
+            email_estimated_response_rate = round(random.uniform(0.08, 0.12), 4)
+            letter_estimated_response_rate = round(random.uniform(0.12, 0.18), 4)
+        elif target_w == 0 and target_a == 1:  # Q3
+            call_response_rate = round(random.uniform(0.10, 0.25), 4)
+            field_visit_response_rate = round(random.uniform(0.40, 0.60), 4)
+            sms_estimated_response_rate = round(random.uniform(0.05, 0.09), 4)
+            email_estimated_response_rate = round(random.uniform(0.03, 0.07), 4)
+            letter_estimated_response_rate = round(random.uniform(0.10, 0.15), 4)
+        else:  # Q4
+            call_response_rate = round(random.uniform(0.02, 0.12), 4)
+            field_visit_response_rate = round(random.uniform(0.25, 0.45), 4)
+            sms_estimated_response_rate = round(random.uniform(0.02, 0.06), 4)
+            email_estimated_response_rate = round(random.uniform(0.01, 0.04), 4)
+            letter_estimated_response_rate = round(random.uniform(0.05, 0.12), 4)
+
         context_data.append((
             snapshot_date, settings.INST_CODE, settings.COUNTRY_CODE,
             cust_info_id,
@@ -223,7 +249,12 @@ def generate_dummy_data(num_records: int = NUM_RECORDS):
             total_exposure_jod,
             current_arrears_jod,
             accrued_interest_jod,
-            late_fees_jod
+            late_fees_jod,
+            call_response_rate,
+            field_visit_response_rate,
+            sms_estimated_response_rate,
+            email_estimated_response_rate,
+            letter_estimated_response_rate
         ))
 
     return willingness_data, ability_data, context_data
@@ -305,8 +336,11 @@ def insert_data(willingness_data: list, ability_data: list, context_data: list) 
                         DAYS_PAST_DUE, CLASSIFICATION_PROBABILITIES,
                         PAYMENT_REJECTION_FREQ, CONTACT_AVOIDANCE_INDEX,
                         TOTAL_EXPOSURE_JOD, CURRENT_ARREARS_JOD,
-                        ACCRUED_INTEREST_JOD, LATE_FEES_JOD
-                    ) VALUES (:1, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11, :12, :13, :14, :15, :16, :17, :18, :19, :20, :21, :22, :23, :24, :25, :26, :27, :28)
+                        ACCRUED_INTEREST_JOD, LATE_FEES_JOD,
+                        CALL_RESPONSE_RATE, FIELD_VISIT_RESPONSE_RATE,
+                        SMS_ESTIMATED_RESPONSE_RATE, EMAIL_ESTIMATED_RESPONSE_RATE,
+                        LETTER_ESTIMATED_RESPONSE_RATE
+                    ) VALUES (:1, :2, :3, :4, :5, :6, :7, :8, :9, :10, :11, :12, :13, :14, :15, :16, :17, :18, :19, :20, :21, :22, :23, :24, :25, :26, :27, :28, :29, :30, :31, :32, :33)
                 """
                 cursor.executemany(sql_context, context_data)
 

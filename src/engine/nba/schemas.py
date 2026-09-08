@@ -142,6 +142,13 @@ class CustomerState(BaseModel):
     age: int = Field(default=40, ge=0, description="From PIO_COLL.PIO_CUSTOMERS_INFO. Defaults to 40 (neutral) when unresolved.")
     account_tenure_days: int = Field(default=0, ge=0, description="Days since PIO_COLL_AI_NBA_CONTEXT_MART.ACCOUNT_OPEN_DATE.")
 
+    # ── Channel Response Rates (Factual baseline metrics from CONTEXT_MART) ──
+    call_response_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Actual RPC rate from PIO_COLL_AI_NBA_CONTEXT_MART.")
+    field_visit_response_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Actual field contact rate from PIO_COLL_AI_NBA_CONTEXT_MART.")
+    sms_estimated_response_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Estimated SMS rate from PIO_COLL_AI_NBA_CONTEXT_MART.")
+    email_estimated_response_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Estimated Email rate from PIO_COLL_AI_NBA_CONTEXT_MART.")
+    letter_estimated_response_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Estimated Letter rate from PIO_COLL_AI_NBA_CONTEXT_MART.")
+
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Action Space — Static Bank Capabilities
@@ -193,6 +200,8 @@ class ScoredAlternative(BaseModel):
     score: int = Field(ge=0, le=100)
     is_selected: bool
     reasoning: str
+    response_rate: Optional[float] = Field(default=None, ge=0.0, le=1.0, description="Actual or estimated channel response rate.")
+    response_rate_type: Optional[str] = Field(default=None, description="'ACTUAL' or 'ESTIMATED'.")
 
 
 class NBAOutput(BaseModel):

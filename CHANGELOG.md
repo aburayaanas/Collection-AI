@@ -4,6 +4,19 @@ All notable changes to the Collection AI project will be documented in this file
 
 ---
 
+## [Unreleased] — 2026-09-08
+
+### Added — Channel Response Rate Baseline Metrics (Backend Integration)
+
+- **Database Column Integration:** In `src/database/features/nba_context.sql` and `src/database/repository.py`, wired 5 new operational response rate columns from `BI_DWH.PIO_COLL_AI_NBA_CONTEXT_MART`: `CALL_RESPONSE_RATE`, `FIELD_VISIT_RESPONSE_RATE` (actual historical contact metrics), and `SMS_ESTIMATED_RESPONSE_RATE`, `EMAIL_ESTIMATED_RESPONSE_RATE`, `LETTER_ESTIMATED_RESPONSE_RATE` (benchmark estimated metrics).
+- **Domain Models & Payload Enrichment:** 
+  - `src/engine/nba/schemas.py`: Added response rate fields to `CustomerState` and `ScoredAlternative`.
+  - `src/engine/nba/bandit.py`: Mapped customer response rates into `ScoredAlternative` objects during both heuristic and LinUCB decision runs.
+  - `src/explainability/xai_aggregator.py`: Enriched `payload.next_best_action.scored_alternatives` with factual response rate values, types (`ACTUAL` vs `ESTIMATED`), and labels (`Actual Contact Rate` vs `Est. Response Rate`), plus exposed a root `channel_response_rates` map on `NextBestAction`.
+- **Demo Showcase Customers Calibration:** In `scripts/clean_demo_showcase_customers.py`, calibrated all 3 showcase customers with realistic factual rates and persisted them to Oracle DB.
+
+---
+
 ## [Unreleased] — 2026-09-07
 
 ### Fixed — Audit Critique Corrections (Data & Logic Consistency)

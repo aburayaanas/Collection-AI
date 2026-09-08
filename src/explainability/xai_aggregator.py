@@ -41,6 +41,7 @@ class NextBestAction(BaseModel):
     recommended_channel: str
     recommended_treatment: str
     scored_alternatives: List[Dict[str, Any]]
+    channel_response_rates: Optional[Dict[str, Dict[str, Any]]] = None
 
 
 class RecoveryQuantification(BaseModel):
@@ -388,6 +389,41 @@ class CockpitAggregator:
             human_override_policy="Agent may override NBA. Must log justification code in CRM within 2 hours.",
         )
 
+        # Factual channel response rates from PIO_COLL_AI_NBA_CONTEXT_MART (Block 04 UI facts)
+        def _to_rate(v: Any) -> Optional[float]:
+            try:
+                return round(float(v), 4) if v is not None else None
+            except Exception:
+                return None
+
+        call_rate = _to_rate(raw_record.get("CALL_RESPONSE_RATE") or raw_record.get("call_response_rate"))
+        visit_rate = _to_rate(raw_record.get("FIELD_VISIT_RESPONSE_RATE") or raw_record.get("field_visit_response_rate"))
+        sms_rate = _to_rate(raw_record.get("SMS_ESTIMATED_RESPONSE_RATE") or raw_record.get("sms_estimated_response_rate"))
+        email_rate = _to_rate(raw_record.get("EMAIL_ESTIMATED_RESPONSE_RATE") or raw_record.get("email_estimated_response_rate"))
+        letter_rate = _to_rate(raw_record.get("LETTER_ESTIMATED_RESPONSE_RATE") or raw_record.get("letter_estimated_response_rate"))
+
+        channel_rates_map = {
+            "Outgoing Call": {"rate": call_rate, "type": "ACTUAL", "label": "Actual Contact Rate"},
+            "Field Visit": {"rate": visit_rate, "type": "ACTUAL", "label": "Actual Contact Rate"},
+            "SMS": {"rate": sms_rate, "type": "ESTIMATED", "label": "Est. Response Rate"},
+            "Email": {"rate": email_rate, "type": "ESTIMATED", "label": "Est. Response Rate"},
+            "Dunning Letter": {"rate": letter_rate, "type": "ESTIMATED", "label": "Est. Response Rate"},
+        }
+
+        # Enrich scored_alternatives with response rate metrics
+        enriched_alts: List[Dict[str, Any]] = []
+        for alt in scored_alternatives:
+            alt_dict = dict(alt)
+            ch_name = alt_dict.get("channel")
+            if ch_name in channel_rates_map:
+                info = channel_rates_map[ch_name]
+                if alt_dict.get("response_rate") is None:
+                    alt_dict["response_rate"] = info["rate"]
+                if alt_dict.get("response_rate_type") is None:
+                    alt_dict["response_rate_type"] = info["type"]
+                alt_dict["response_rate_label"] = info["label"]
+            enriched_alts.append(alt_dict)
+
         payload = CockpitPayload(
             cust_info_id=str(cust_info_id),
             country_code=str(country_code),
@@ -397,7 +433,8 @@ class CockpitAggregator:
             next_best_action=NextBestAction(
                 recommended_channel=str(nba_channel),
                 recommended_treatment=str(nba_treatment),
-                scored_alternatives=scored_alternatives,
+                scored_alternatives=enriched_alts,
+                channel_response_rates=channel_rates_map,
             ),
             recovery_quantification=recovery_quant,
             escalation_timeline=escalation_time,
