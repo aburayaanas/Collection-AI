@@ -194,14 +194,20 @@ When running in `MODE=FULL`, the system executes 5 sequential steps:
 - Runs SHAP for configured scopes (`SHAP_SCOPE`).
 - Inserts top-3 feature contributions per customer to the DWH.
 
-#### Step E — NBA Engine *(Phase 2)*
+#### Step E — NBA Engine *(Phase 2 guardrails/heuristic, Phase 3 contextual bandit)*
 
 - Takes the Matrix output DataFrame directly (no extra DB read).
-- **Guardrails** (`RuleEngine`): Deterministically filters the allowed channel set per customer — exclusion check (Deceased, Legal, etc.) then channel-ceiling pruning (SMS cap, call cap, minimum-due thresholds).
-- **Bandit** (`ContextualBandit`): Selects the optimal channel + treatment from the allowed set using a quadrant-based heuristic policy.
+- **Guardrails** (`RuleEngine`): Deterministically filters the allowed channel set per customer — exclusion check (Deceased, Legal, etc.) then channel-ceiling pruning (SMS cap, call cap, minimum-due thresholds). Unchanged by Phase 3 — runs first, always.
+- **Bandit** (`ContextualBandit`): Selects the optimal channel from the allowed set. Treatment is always the fixed quadrant→treatment map below. Channel selection runs one of three policies via `NBA_POLICY_MODE`:
+
+  - `HEURISTIC` (default) — the original quadrant-based scoring heuristic.
+  - `SHADOW` — the heuristic still decides `RECOMMENDED_CHANNEL`, but the Phase 3 LinUCB contextual bandit (`RewardTracker`) computes and logs its own pick for comparison (`DECISION_REASON` gets a `|SHADOW_RL_PICK:<channel>(score=...)` suffix).
+  - `LIVE` — the LinUCB pick drives `RECOMMENDED_CHANNEL` directly (`DECISION_REASON` becomes `RL:<Q>|LINUCB|<CHANNEL>|<TREATMENT>`).
+
+  See [docs/phase3_contextual_bandit_rl.md](docs/phase3_contextual_bandit_rl.md) for the full design (LinUCB math, 13-dim context vector, cold-start seeding from the heuristic, and how `PIO_COLL_AI_RL_FEEDBACK` trains it).
 - Persists recommendations to `BI_DWH.PIO_COLL_AI_NBA_ACTIONS` via MERGE.
 
-> **Fault isolation:** A failure in Step E never corrupts the already-committed Matrix results. Each step has its own error boundary.
+> **Fault isolation:** A failure in Step E never corrupts the already-committed Matrix results. Each step has its own error boundary — and within Step E, a `RewardTracker` refresh failure degrades to the heuristic for that run rather than failing the whole phase.
 
 ### 3. Quadrant Logic & Collection Strategy
 
@@ -243,11 +249,25 @@ PTP (Promise to Pay) | Scheduling and Structuring | Partial Payment | Special Ha
 
 #### `BI_DWH.PIO_COLL_AI_NBA_ACTIONS` *(Phase 2)*
 
-| Column                  | Description                                                        |
-| ----------------------- | ------------------------------------------------------------------ |
-| `RECOMMENDED_CHANNEL` | Selected outreach channel (e.g.,`Email`, `Outgoing Call`).     |
-| `RECOMMENDED_OFFER`   | Selected treatment (e.g.,`PTP`, `Scheduling and Structuring`). |
-| `DECISION_REASON`     | Structured audit trail (e.g.,`BANDIT:Q1\|SOFT_TOUCH\|EMAIL\|PTP`).  |
+| Column                  | Description                                                                                                   |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `RECOMMENDED_CHANNEL` | Selected outreach channel (e.g.,`Email`, `Outgoing Call`).                                                |
+| `RECOMMENDED_OFFER`   | Selected treatment (e.g.,`PTP`, `Scheduling and Structuring`).                                            |
+| `DECISION_REASON`     | Structured audit trail (e.g.,`BANDIT:Q1\|SOFT_TOUCH\|EMAIL\|PTP`, or `RL:Q1\|LINUCB\|EMAIL\|PTP` in LIVE mode). |
+
+#### `BI_DWH.PIO_COLL_AI_RL_FEEDBACK` *(Phase 3)*
+
+Trains the LinUCB contextual bandit. Populated today by
+`scripts/generate_synthetic_rl_feedback.py` against real
+`PIO_COLL_AI_NBA_ACTIONS` rows; the DB team's real outcome-tracking
+procedure can write to this exact same table later with zero pipeline
+changes. See [docs/phase3_contextual_bandit_rl.md](docs/phase3_contextual_bandit_rl.md).
+
+| Column                  | Description                                                                                                                            |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| `ACTUAL_CHANNEL_USED` | The channel actually pulled — the bandit always learns from this, never`AI_RECOMMENDED_CHANNEL`, to avoid off-policy contamination. |
+| `CUSTOMER_OUTCOME`    | `PAID_IN_FULL` \| `KEPT_PTP` \| `RESTRUCTURE_AGREED` \| `BROKEN_PTP` \| `IGNORED`.                                           |
+| `BANDIT_REWARD_SCORE` | Reward mapped from`CUSTOMER_OUTCOME` (`src.engine.nba.reward_tracker.map_outcome`), the LinUCB training target.                    |
 
 ---
 
@@ -266,7 +286,8 @@ Collection-AI/
 │   └── collectionai_config.spec
 ├── scripts/
 │   ├── build_exes.ps1            # Builds both executables via PyInstaller
-│   └── generate_synthatic_data.py  # Dev-only: seed mart tables with synthetic data
+│   ├── generate_synthatic_data.py  # Dev-only: seed mart tables with synthetic data
+│   └── generate_synthetic_rl_feedback.py  # Dev-only: seed PIO_COLL_AI_RL_FEEDBACK for Phase 3
 ├── src/
 │   ├── main.py                   # Pipeline Orchestrator: execute_pipeline() + CLI main()
 │   ├── core/                     # Config, Paths, Logging, Error Taxonomy, Validation, Retention
@@ -289,18 +310,22 @@ Collection-AI/
 │   │   └── features/             # SQL feature files & DDL scripts
 │   │       ├── willingness.sql
 │   │       ├── ability.sql
+│   │       ├── nba_context.sql                   # NBA context mart query (+ AGE join, Phase 3)
+│   │       ├── rl_feedback.sql                   # Phase 3 bandit training data query
 │   │       ├── ddl_nba_actions.sql               # CREATE TABLE for NBA output
+│   │       ├── ddl_rl_feedback.sql               # CREATE TABLE for Phase 3 feedback (already live)
 │   │       └── ddl_willingness_mart_nba_columns.sql  # ALTER TABLE for NBA context columns
 │   ├── models_engine/
 │   │   ├── willingness/          # Trainer & Scorer
 │   │   └── ability/              # Trainer & Scorer
 │   ├── engine/
 │   │   ├── matrix.py             # Score joining, quadrant assignment
-│   │   └── nba/                  # Phase 2 — NBA Engine
-│   │       ├── schemas.py        # Pydantic models (CustomerState, NBAOutput)
-│   │       ├── guardrails.py     # Deterministic compliance rule engine
-│   │       ├── bandit.py         # Contextual Bandit decision engine
-│   │       └── orchestrator.py   # Batch controller wiring guardrails + bandit
+│   │   └── nba/                  # Phase 2/3 — NBA Engine
+│   │       ├── schemas.py          # Pydantic models (CustomerState, NBAOutput)
+│   │       ├── guardrails.py       # Deterministic compliance rule engine
+│   │       ├── bandit.py           # Decision engine — HEURISTIC / SHADOW / LIVE
+│   │       ├── reward_tracker.py   # Phase 3 — LinUCB contextual bandit
+│   │       └── orchestrator.py     # Batch controller wiring guardrails + bandit + reward_tracker
 │   └── explainability/           # SHAP shadow runner
 ├── models/                       # Saved JSON model artifacts & pointer files (auto-pruned)
 └── data/cache/                   # Intermediate Parquet files (scoring cache, auto-pruned)
@@ -331,6 +356,11 @@ src/database/features/ddl_nba_actions.sql
 
 # 2. Add NBA context columns to the willingness mart
 src/database/features/ddl_willingness_mart_nba_columns.sql
+
+# 3. Phase 3 contextual bandit feedback table (already live in this
+#    environment — see docs/phase3_contextual_bandit_rl.md — but run
+#    this in any environment where it doesn't exist yet)
+src/database/features/ddl_rl_feedback.sql
 ```
 
 ---

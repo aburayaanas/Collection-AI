@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime
 from src.database.connection import db
 from src.core.logger import setup_logging, get_logger
 from src.core.taxonomy import ErrorAdvisor
@@ -188,7 +189,8 @@ def run_nba_steps(logger, matrix_df: pl.DataFrame | None) -> None:
             "DAYS_PAST_DUE":              pl.Int64,
             "CLASSIFICATION_PROBABILITIES": pl.Utf8,
             "PAYMENT_REJECTION_FREQ": pl.Int64,
-            "CONTACT_AVOIDANCE_INDEX": pl.Float64
+            "CONTACT_AVOIDANCE_INDEX": pl.Float64,
+            "AGE": pl.Int64,
         })
 
     # ── Step 3: Join context onto matrix (left join — matrix is leading) ─
@@ -196,24 +198,45 @@ def run_nba_steps(logger, matrix_df: pl.DataFrame | None) -> None:
     #   ACCOUNT_STATUS = "Active" (no exclusion fires)
     #   TOTAL_DUE = 0 (field-visit / dunning blocked — conservative)
     #   SMS/CALLS = 0 (no frequency caps fire)
+    #   DAYS_PAST_DUE/CONTACT_AVOIDANCE_INDEX = 0, AGE = 40 (neutral —
+    #   Phase 3 LinUCB context vector inputs, docs/phase3_contextual_bandit_rl.md)
     df_nba_input = df_matrix.join(df_context, on="CUST_INFO_ID", how="left").with_columns([
         pl.col("ACCOUNT_STATUS").fill_null("Active"),
         pl.col("TOTAL_DUE").fill_null(0.0),
         pl.col("SMS_SENT_THIS_WEEK").fill_null(0),
         pl.col("CALLS_MADE_TODAY").fill_null(0),
+        pl.col("DAYS_PAST_DUE").fill_null(0),
+        pl.col("CONTACT_AVOIDANCE_INDEX").fill_null(0.0),
+        pl.col("AGE").fill_null(40),
+    ])
+
+    # ── Step 3.1: Account tenure (days since account open) for LinUCB ──
+    # DAY_DATE is a plain string here (set via pl.lit(get_snap_date()) in
+    # matrix.py), not a Datetime, so it needs parsing before subtracting
+    # from ACCOUNT_OPEN_DATE (which is pl.Datetime per get_nba_context_data()).
+    day_date_str = df_nba_input["DAY_DATE"][0] if "DAY_DATE" in df_nba_input.columns else None
+    day_date_dt = datetime.strptime(day_date_str, "%Y-%m-%d") if day_date_str else datetime.now()
+    df_nba_input = df_nba_input.with_columns([
+        pl.col("ACCOUNT_OPEN_DATE").fill_null(pl.lit(day_date_dt)),
+    ]).with_columns([
+        (pl.lit(day_date_dt) - pl.col("ACCOUNT_OPEN_DATE")).dt.total_days().fill_null(0).alias("ACCOUNT_TENURE_DAYS"),
     ])
 
     # ── Step 3.2: Join raw ML features needed for Behavioral Signals ──
     try:
         df_w_features = repo.get_willingness_training_data().select([
-            "CUST_INFO_ID", "DAYS_SINCE_LAST_RPC", "BROKEN_PTP_COUNT_6M"
+            "CUST_INFO_ID", "DAYS_SINCE_LAST_RPC", "BROKEN_PTP_COUNT_6M", "PTP_RELIABILITY_RATIO"
         ])
-        df_nba_input = df_nba_input.join(df_w_features, on="CUST_INFO_ID", how="left")
+        df_nba_input = df_nba_input.join(df_w_features, on="CUST_INFO_ID", how="left").with_columns([
+            pl.col("DAYS_SINCE_LAST_RPC").fill_null(180),
+            pl.col("PTP_RELIABILITY_RATIO").fill_null(0.0),
+        ])
     except Exception as w_exc:
         logger.warning(f"Could not join willingness features for behavioral signals: {w_exc}")
         df_nba_input = df_nba_input.with_columns([
             pl.lit(0).alias("DAYS_SINCE_LAST_RPC"),
-            pl.lit(0).alias("BROKEN_PTP_COUNT_6M")
+            pl.lit(0).alias("BROKEN_PTP_COUNT_6M"),
+            pl.lit(0.0).alias("PTP_RELIABILITY_RATIO"),
         ])
 
     try:
@@ -245,9 +268,20 @@ def run_nba_steps(logger, matrix_df: pl.DataFrame | None) -> None:
         f"context_matched={df_context.height:,}"
     )
 
+    # ── Step 3.6: Fetch Phase 3 RL feedback (skipped in HEURISTIC mode) ──
+    # See docs/phase3_contextual_bandit_rl.md. A fetch failure here must
+    # never fail the NBA phase — the orchestrator degrades to the
+    # heuristic policy for this run when df_feedback is None.
+    df_feedback = None
+    if settings.NBA_POLICY_MODE.upper() != "HEURISTIC":
+        try:
+            df_feedback = repo.get_rl_feedback_data(settings.RL_LOOKBACK_DAYS)
+        except Exception as rl_exc:
+            logger.warning(f"Could not fetch RL feedback data: {rl_exc}. Bandit will run cold-start only this run.")
+
     # ── Run the orchestrator ──────────────────────────────────────────
     orchestrator = NBAOrchestrator()
-    df_nba_output = orchestrator.process_batch(df_nba_input)
+    df_nba_output = orchestrator.process_batch(df_nba_input, df_feedback=df_feedback)
 
     # ── Add tenant + date context required by the DB MERGE ───────────
     day_date = matrix_df["DAY_DATE"][0]
@@ -397,11 +431,22 @@ def execute_pipeline(mode: str, model_scope: str | None = None, shap_scope: str 
 
 
 def main():
-    """CLI entry point (``python -m src.main``). Reads mode/scope from .env."""
+    """CLI entry point (``python -m src.main``). Reads mode/scope from CLI args or .env."""
     reload_settings()
+    import argparse
+    parser = argparse.ArgumentParser(description="Collection AI Pipeline")
+    parser.add_argument("--mode", default=None, help="Execution mode (SCORE, TRAIN, FULL)")
+    parser.add_argument("--model-scope", default=None, help="Model scope (WILLINGNESS, ABILITY, BOTH)")
+    parser.add_argument("--shap-scope", default=None, help="SHAP scope (WILLINGNESS, ABILITY, BOTH, NONE)")
+    args, _ = parser.parse_known_args()
+
+    mode = args.mode or settings.MODE
+    model_scope = args.model_scope or settings.MODEL_SCOPE
+    shap_scope = args.shap_scope or settings.SHAP_SCOPE
+
     logger = get_logger(__name__)
     try:
-        execute_pipeline(settings.MODE, settings.MODEL_SCOPE, settings.SHAP_SCOPE)
+        execute_pipeline(mode, model_scope, shap_scope)
     except Exception as e:
         diagnostic = ErrorAdvisor.analyze(e)
         logger.critical(f"FATAL PIPELINE ERROR:\n{diagnostic}")

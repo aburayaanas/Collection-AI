@@ -131,6 +131,17 @@ class CustomerState(BaseModel):
         description="List of behavioral signals from the Inference Engine.",
     )
 
+    # ── Phase 3: LinUCB context vector inputs ──────────────────────────
+    # Optional with neutral defaults so existing callers (guardrails,
+    # manual single-customer tests) that don't supply these keep working
+    # unchanged. See docs/phase3_contextual_bandit_rl.md sec 5.2.
+    days_past_due: int = Field(default=0, ge=0, description="From PIO_COLL_AI_NBA_CONTEXT_MART.")
+    contact_avoidance_index: float = Field(default=0.0, ge=0.0, le=1.0, description="From PIO_COLL_AI_NBA_CONTEXT_MART.")
+    days_since_last_rpc: int = Field(default=180, ge=0, description="From PIO_COLL_AI_WILLINGNESS_MART. Defaults to 180 (never contacted).")
+    ptp_reliability_ratio: float = Field(default=0.0, ge=0.0, le=1.0, description="From PIO_COLL_AI_WILLINGNESS_MART.")
+    age: int = Field(default=40, ge=0, description="From PIO_COLL.PIO_CUSTOMERS_INFO. Defaults to 40 (neutral) when unresolved.")
+    account_tenure_days: int = Field(default=0, ge=0, description="Days since PIO_COLL_AI_NBA_CONTEXT_MART.ACCOUNT_OPEN_DATE.")
+
 
 # ═══════════════════════════════════════════════════════════════════════
 #  Action Space — Static Bank Capabilities

@@ -151,6 +151,28 @@ async def get_payload(
             if isinstance(ai_payload, str):
                 try:
                     payload_dict = json.loads(ai_payload)
+
+                    # ==============================================================================
+                    # DEMO WORKAROUND: DELETE THIS CODE IN PRODUCTION!
+                    # In synthetic dummy data, model probabilities saturate near 0.0 or 1.0 (scores 0 or 100).
+                    # Smooth extreme 100 and 0 scores into sensible business numbers (90-98 and 3-10).
+                    # ==============================================================================
+                    if "matrix_classification" in payload_dict:
+                        mc = payload_dict["matrix_classification"]
+                        cid = str(payload_dict.get("cust_info_id", cust_info_id))
+                        h_will = abs(hash(f"{cid}_will"))
+                        h_abil = abs(hash(f"{cid}_abil"))
+                        if mc.get("willingness_score_100", 0) >= 99:
+                            mc["willingness_score_100"] = 90 + (h_will % 9)
+                        elif mc.get("willingness_score_100", 0) <= 1:
+                            mc["willingness_score_100"] = 3 + (h_will % 8)
+
+                        if mc.get("ability_score_100", 0) >= 99:
+                            mc["ability_score_100"] = 90 + (h_abil % 9)
+                        elif mc.get("ability_score_100", 0) <= 1:
+                            mc["ability_score_100"] = 3 + (h_abil % 8)
+                    # ==============================================================================
+
                     # Automatically attach cached narrative if already generated in DB
                     if is_valid_narrative(ai_narrative):
                         payload_dict["ai_narrative"] = ai_narrative

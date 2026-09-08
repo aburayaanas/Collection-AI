@@ -55,6 +55,27 @@ FIELD_SCHEMA: List[Field] = [
     Field("RETENTION_KEEP_N", "Artifact Retention Count", "Pipeline", "int", "How many recent model/cache files to keep before pruning.", default="10"),
     Field("SNAP_DATE_OVERRIDE", "Snap Date Override", "Pipeline", "str", "TESTING ONLY — pins the business date (YYYY-MM-DD). Leave BLANK in production.", default=""),
 
+    # --- Behavioral Signal Thresholds (docs/backend_issues.md Issue 5) ---
+    Field("SIGNAL_LIQUIDITY_INFLOW_VARIANCE_THRESHOLD", "Liquidity: Inflow Variance Threshold", "Pipeline", "float", "INFLOW_VARIANCE_30D above this (+ a payment rejection) triggers the Liquidity Disruption hypothesis.", default="500.0"),
+    Field("SIGNAL_LIQUIDITY_CONFIDENCE_MIN", "Liquidity: Confidence Floor", "Pipeline", "float", "Lower clamp for the Liquidity Disruption hypothesis confidence (0-1).", default="0.55"),
+    Field("SIGNAL_LIQUIDITY_CONFIDENCE_MAX", "Liquidity: Confidence Ceiling", "Pipeline", "float", "Upper clamp for the Liquidity Disruption hypothesis confidence (0-1).", default="0.75"),
+    Field("SIGNAL_EVASION_DAYS_SINCE_RPC_THRESHOLD", "Evasion: Days Since Contact Threshold", "Pipeline", "int", "DAYS_SINCE_LAST_RPC above this (+ high avoidance) contributes to the Evasive Pattern signal.", default="30"),
+    Field("SIGNAL_EVASION_CONTACT_AVOIDANCE_THRESHOLD", "Evasion: Contact Avoidance Threshold", "Pipeline", "float", "CONTACT_AVOIDANCE_INDEX at/above this triggers the Contact Failure / Evasive Pattern signals (0-1).", default="0.6"),
+
+    # --- Escalation Timeline (docs/backend_issues.md Issue 4) ---
+    Field("ESCALATION_PHASE1_DAYS", "Escalation: Phase 1 Length (days)", "Pipeline", "int", "Length of the active-channel window before Phase 2 can trigger.", default="7"),
+    Field("ESCALATION_PHASE2_END_DAY", "Escalation: Phase 2 End Day", "Pipeline", "int", "Day (from today) Phase 2 ends and Phase 3 (legal referral) can trigger.", default="21"),
+    Field("ESCALATION_LEGAL_INELIGIBLE_PRODUCTS", "Escalation: Demand-Letter-Ineligible Products", "Pipeline", "str", "Comma-separated products for which a formal demand letter must not be offered. Blank = no restriction (no rule documented yet).", default=""),
+
+    # --- Reinforcement Learning (Phase 3 contextual bandit) ---
+    # See docs/phase3_contextual_bandit_rl.md.
+    Field("NBA_POLICY_MODE", "NBA Policy Mode", "Reinforcement Learning", "choice", "HEURISTIC = today's static scoring (safe default). SHADOW = LinUCB computes+logs its pick but the heuristic still acts. LIVE = LinUCB drives the recommendation.", ["HEURISTIC", "SHADOW", "LIVE"], default="HEURISTIC"),
+    Field("RL_LOOKBACK_DAYS", "Feedback Lookback (days)", "Reinforcement Learning", "int", "How many days of PIO_COLL_AI_RL_FEEDBACK to read when rebuilding the bandit's arms each run.", default="90"),
+    Field("RL_PRIOR_STRENGTH", "Cold-Start Prior Strength", "Reinforcement Learning", "int", "Pseudo-observation weight of the heuristic-derived cold-start prior for each arm.", default="20"),
+    Field("RL_LINUCB_ALPHA", "LinUCB Exploration Weight (alpha)", "Reinforcement Learning", "float", "Higher = more exploration of under-sampled channels. Tune down if LIVE mode over-concentrates on one channel.", default="1.0"),
+    Field("RL_LINUCB_LAMBDA", "LinUCB Ridge Regularization (lambda)", "Reinforcement Learning", "float", "Ridge regularization strength for each arm's design matrix.", default="1.0"),
+    Field("RL_MIN_SAMPLES", "Min Samples Before 'Seasoned'", "Reinforcement Learning", "int", "Observability threshold only — arms below this are logged as still prior-dominated, not blocked.", default="30"),
+
     # --- Narrative API ---
     Field("LLM_BASE_URL", "LLM Base URL", "Narrative API", "str", "Local LM Studio server URL.", default="http://localhost:1234/v1"),
     Field("LLM_MODEL_NAME", "LLM Model Name", "Narrative API", "str", ""),

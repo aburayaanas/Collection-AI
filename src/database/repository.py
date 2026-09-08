@@ -5,6 +5,8 @@ This module provides data access methods for persisting ML predictions
 to the Oracle database, including bulk MERGE operations.
 """
 
+from datetime import datetime, timedelta
+
 import polars as pl
 
 from src.core.logger import get_logger
@@ -221,12 +223,17 @@ class CollectionRepository:
             "TOTAL_EXPOSURE_JOD":         pl.Float64,
             "CURRENT_ARREARS_JOD":        pl.Float64,
             "ACCRUED_INTEREST_JOD":       pl.Float64,
-            "LATE_FEES_JOD":              pl.Float64
+            "LATE_FEES_JOD":              pl.Float64,
+            "AGE":                        pl.Int64,
         }
 
         df = pl.DataFrame(rows, schema=schema, orient="row")
 
-        # Safe defaults: nulls must never reach the guardrail engine
+        # Safe defaults: nulls must never reach the guardrail engine or the
+        # Phase 3 bandit's context vector (docs/phase3_contextual_bandit_rl.md).
+        # AGE defaults to 40 (neutral midpoint) — NULL for synthetic test
+        # customers with no PIO_COLL.PIO_CUSTOMERS_INFO counterpart; resolves
+        # automatically with real production CUST_INFO_IDs.
         df = df.with_columns([
             pl.col("ACCOUNT_STATUS").fill_null("Active"),
             pl.col("TOTAL_DUE").fill_null(0.0),
@@ -236,6 +243,9 @@ class CollectionRepository:
             pl.col("CURRENT_ARREARS_JOD").fill_null(0.0),
             pl.col("ACCRUED_INTEREST_JOD").fill_null(0.0),
             pl.col("LATE_FEES_JOD").fill_null(0.0),
+            pl.col("DAYS_PAST_DUE").fill_null(0),
+            pl.col("CONTACT_AVOIDANCE_INDEX").fill_null(0.0),
+            pl.col("AGE").fill_null(40),
         ])
 
         logger.info(f"NBA context DataFrame: {df.shape[0]:,} rows x {df.shape[1]} columns")
@@ -275,6 +285,92 @@ class CollectionRepository:
             "ABIL_POSITIVE_DRIVERS": pl.String,
         }
         return pl.DataFrame(rows, schema=schema, orient="row")
+
+    def get_rl_feedback_data(self, lookback_days: int) -> pl.DataFrame:
+        """Fetch PIO_COLL_AI_RL_FEEDBACK rows for the Phase 3 contextual bandit.
+
+        Joins in quadrant (exact-date, from PIO_COLL_AI_NBA_ACTIONS) and
+        the context features LinUCB needs (current mart snapshot — see
+        docs/phase3_contextual_bandit_rl.md sections 5.2-5.4 for why this
+        is not an exact historical date match). Null-fills numeric
+        features using the same "fill and proceed" convention as
+        get_willingness_training_data()/get_ability_training_data(); rows
+        without a resolvable quadrant or reward are dropped since a LinUCB
+        update needs both to build (x, r).
+
+        Args:
+            lookback_days: How many days back (from the current snap date)
+                of feedback to include.
+
+        Returns:
+            Polars DataFrame, one row per feedback record, ready for
+            RewardTracker.refresh().
+        """
+        logger.info(f"Fetching RL feedback data (lookback={lookback_days}d)...")
+
+        snap_date = get_snap_date(settings.INST_CODE, settings.COUNTRY_CODE)
+        if not snap_date:
+            raise ValueError("Snapshot date retrieval failed")
+
+        cutoff_date = (
+            datetime.strptime(snap_date, "%Y-%m-%d") - timedelta(days=lookback_days)
+        ).strftime("%Y-%m-%d")
+
+        sql = get_query("rl_feedback")
+
+        with db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(sql, {
+                "cutoff_date": cutoff_date,
+                "inst_code": settings.INST_CODE,
+                "country_code": settings.COUNTRY_CODE,
+            })
+            rows = cursor.fetchall()
+            cursor.close()
+
+        logger.info(f"Retrieved {len(rows):,} RL feedback records since {cutoff_date}")
+
+        schema = {
+            "DAY_DATE": pl.Datetime,
+            "INST_CODE": pl.String,
+            "COUNTRY_CODE": pl.String,
+            "CUST_INFO_ID": pl.String,
+            "AI_RECOMMENDED_CHANNEL": pl.String,
+            "AGENT_OVERRIDE_FLAG": pl.Int64,
+            "ACTUAL_CHANNEL_USED": pl.String,
+            "CUSTOMER_OUTCOME": pl.String,
+            "BANDIT_REWARD_SCORE": pl.Float64,
+            "QUADRANT": pl.String,
+            "TOTAL_DUE": pl.Float64,
+            "DAYS_PAST_DUE": pl.Int64,
+            "CONTACT_AVOIDANCE_INDEX": pl.Float64,
+            "SMS_SENT_THIS_WEEK": pl.Int64,
+            "ACCOUNT_OPEN_DATE": pl.Datetime,
+            "DAYS_SINCE_LAST_RPC": pl.Int64,
+            "PTP_RELIABILITY_RATIO": pl.Float64,
+            "AGE": pl.Int64,
+        }
+        df = pl.DataFrame(rows, schema=schema, orient="row")
+
+        # Can't build a context vector or attribute reward without these.
+        df = df.filter(pl.col("QUADRANT").is_not_null() & pl.col("BANDIT_REWARD_SCORE").is_not_null())
+
+        snap_dt = datetime.strptime(snap_date, "%Y-%m-%d")
+        df = df.with_columns([
+            pl.col("TOTAL_DUE").fill_null(0.0),
+            pl.col("DAYS_PAST_DUE").fill_null(0),
+            pl.col("CONTACT_AVOIDANCE_INDEX").fill_null(0.0),
+            pl.col("SMS_SENT_THIS_WEEK").fill_null(0),
+            pl.col("DAYS_SINCE_LAST_RPC").fill_null(180),
+            pl.col("PTP_RELIABILITY_RATIO").fill_null(0.0),
+            pl.col("AGE").fill_null(40),
+            pl.col("ACCOUNT_OPEN_DATE").fill_null(pl.lit(snap_dt)),
+        ]).with_columns([
+            (pl.lit(snap_dt) - pl.col("ACCOUNT_OPEN_DATE")).dt.total_days().fill_null(0).alias("ACCOUNT_TENURE_DAYS"),
+        ])
+
+        logger.info(f"RL feedback DataFrame ready: {df.height:,} usable rows x {df.width} columns")
+        return df
 
     def upsert_matrix_results(self, df: pl.DataFrame) -> None:
         """

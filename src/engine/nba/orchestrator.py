@@ -46,6 +46,7 @@ from pydantic import ValidationError  # noqa: F401
 from src.core.logger import get_logger
 from src.engine.nba.bandit import ContextualBandit
 from src.engine.nba.guardrails import RuleEngine
+from src.engine.nba.reward_tracker import RewardTracker
 from src.engine.nba.schemas import Channel, CustomerState, NBAOutput, Treatment # noqa: F401
 from src.explainability.xai_aggregator import CockpitAggregator
 from src.core.config import settings
@@ -78,8 +79,11 @@ class NBAOrchestrator:
         rule_engine (RuleEngine): Deterministic compliance filter.
             Instantiated once and reused across the entire batch
             for performance.
-        bandit (ContextualBandit): Heuristic decision engine.
-            Instantiated once; stateless per evaluation call.
+        bandit (ContextualBandit): Decision engine — HEURISTIC / SHADOW /
+            LIVE per ``settings.NBA_POLICY_MODE`` (docs/phase3_contextual_bandit_rl.md).
+        reward_tracker (RewardTracker): Phase 3 LinUCB engine backing the
+            bandit in SHADOW/LIVE mode. Seeded fresh every ``process_batch()``
+            call via ``refresh_reward_tracker()`` — never incrementally.
 
     Example — single customer::
 
@@ -95,21 +99,53 @@ class NBAOrchestrator:
 
     Example — full batch::
 
-        df_results = orchestrator.process_batch(df_phase1_output)
+        df_results = orchestrator.process_batch(df_phase1_output, df_feedback=repo.get_rl_feedback_data(90))
         repo.upsert_nba_actions(df_results)
     """
 
     def __init__(self) -> None:
-        """Initialise the orchestrator with its two sub-components.
+        """Initialise the orchestrator with its sub-components.
 
-        Both sub-components use default configurations. To override
-        compliance limits (e.g. per-institution SMS caps), instantiate
-        ``RuleEngine`` separately and pass it in via composition once
-        the codebase grows to support multi-tenancy.
+        To override compliance limits (e.g. per-institution SMS caps),
+        instantiate ``RuleEngine`` separately and pass it in via
+        composition once the codebase grows to support multi-tenancy.
         """
         self.rule_engine = RuleEngine()
-        self.bandit = ContextualBandit()
-        logger.info("NBAOrchestrator ready.")
+        self.reward_tracker = RewardTracker(
+            prior_strength=settings.RL_PRIOR_STRENGTH,
+            ridge_lambda=settings.RL_LINUCB_LAMBDA,
+            alpha=settings.RL_LINUCB_ALPHA,
+            min_samples=settings.RL_MIN_SAMPLES,
+        )
+        self.bandit = ContextualBandit(
+            reward_tracker=self.reward_tracker,
+            policy_mode=settings.NBA_POLICY_MODE,
+        )
+        logger.info(f"NBAOrchestrator ready | policy_mode={self.bandit.policy_mode}")
+
+    # ── Reward tracker refresh ───────────────────────────────────────
+
+    def refresh_reward_tracker(self, df_batch: pl.DataFrame, df_feedback: pl.DataFrame | None) -> None:
+        """(Re)seeds the LinUCB reward tracker for this run.
+
+        Skipped entirely in HEURISTIC mode (no need to touch
+        PIO_COLL_AI_RL_FEEDBACK when nothing will read the tracker).
+        Any failure here is logged and swallowed, not raised — the
+        bandit's ``_linucb_pick`` already degrades to the heuristic when
+        ``reward_tracker.is_ready`` is False, so a refresh failure must
+        never fail the NBA phase, only quietly keep it on the heuristic
+        for this run (docs/phase3_contextual_bandit_rl.md sec 1).
+        """
+        if self.bandit.policy_mode == "HEURISTIC":
+            logger.debug("NBA_POLICY_MODE=HEURISTIC — skipping reward tracker refresh.")
+            return
+        try:
+            self.reward_tracker.seed_and_refresh(self.bandit._score_channel, df_batch, df_feedback)
+        except Exception as exc:
+            logger.error(
+                f"RewardTracker refresh failed: {exc}. "
+                f"Continuing this run on the heuristic policy for every customer."
+            )
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -203,7 +239,7 @@ class NBAOrchestrator:
             )
             return self._error_output(customer.cust_info_id, exc)
 
-    def process_batch(self, df: pl.DataFrame) -> pl.DataFrame:
+    def process_batch(self, df: pl.DataFrame, df_feedback: pl.DataFrame | None = None) -> pl.DataFrame:
         """Run the full NBA pipeline for a Polars DataFrame batch.
 
         This is the **main entry point for the nightly pipeline**.
@@ -219,9 +255,17 @@ class NBAOrchestrator:
             df (pl.DataFrame): Input DataFrame from Phase 1. Expected
                 columns: ``CUST_INFO_ID``, ``CURRENT_QUADRANT``,
                 ``ACCOUNT_STATUS``, ``TOTAL_DUE``,
-                ``SMS_SENT_THIS_WEEK``, ``CALLS_MADE_TODAY``.
+                ``SMS_SENT_THIS_WEEK``, ``CALLS_MADE_TODAY``, plus the
+                Phase 3 LinUCB context columns (``DAYS_PAST_DUE``,
+                ``CONTACT_AVOIDANCE_INDEX``, ``DAYS_SINCE_LAST_RPC``,
+                ``PTP_RELIABILITY_RATIO``, ``AGE``, ``ACCOUNT_TENURE_DAYS``).
                 Column names are normalised to lowercase before
                 being passed to ``CustomerState``.
+            df_feedback (pl.DataFrame | None): Output of
+                ``CollectionRepository.get_rl_feedback_data()``, used to
+                (re)seed the LinUCB reward tracker for this run. Ignored
+                in HEURISTIC mode. None is treated as "no feedback yet"
+                (cold-start-only arms), not an error.
 
         Returns:
             pl.DataFrame: Result DataFrame with the following schema,
@@ -248,6 +292,8 @@ class NBAOrchestrator:
             f"NBA batch processing started | "
             f"rows={df.height:,}, columns={df.columns}"
         )
+
+        self.refresh_reward_tracker(df, df_feedback)
 
         results: List[dict[str, str]] = []
         error_count: int = 0

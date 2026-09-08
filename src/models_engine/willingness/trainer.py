@@ -24,10 +24,12 @@ import xgboost as xgb
 import optuna
 import mlflow
 import mlflow.xgboost
+from sklearn.isotonic import IsotonicRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score, precision_score, recall_score, f1_score
 
 from src.core.logger import get_logger
+from src.models_engine import calibration
 
 logger = get_logger(__name__)
 
@@ -58,6 +60,7 @@ class WillingnessTrainer:
         self.model_dir.mkdir(exist_ok=True, parents=True)
         self.model = None
         self.best_params = None
+        self.calibrator: IsotonicRegression | None = None
 
     # ── Public entry point ───────────────────────────────────────────
 
@@ -104,11 +107,13 @@ class WillingnessTrainer:
 
             # Step 7: Train final model (on TRAINING fold only)
             logger.info("Training final model with optimized hyperparameters...")
-            self.model = self.train_final_model(dtrain, dtest, self.best_params)
+            self.model = self.train_final_model(
+                X_train, y_train, dtrain, dtest, feature_cols, self.best_params,
+            )
 
             # Step 8: Save model artifacts
             logger.info("Saving model artifacts...")
-            self.save_model(self.model)
+            self.save_model(self.model, self.calibrator)
 
         logger.info("Training pipeline completed successfully!")
 
@@ -286,13 +291,19 @@ class WillingnessTrainer:
 
     def train_final_model(
         self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
         dtrain: xgb.DMatrix,
         dtest: xgb.DMatrix,
+        feature_cols: list,
         best_params: Dict[str, Any],
     ) -> xgb.Booster:
         """
         Train the final XGBoost model on the TRAINING fold.
-        Evaluate on the held-out TEST fold.
+        Evaluate on the held-out TEST fold. Also fits and evaluates the
+        probability calibrator (docs/backend_issues.md Issue 3 — see
+        src/models_engine/calibration.py for why this is necessary and
+        how it's done without leaking test-fold information).
         """
         model = xgb.train(
             params=best_params,
@@ -307,11 +318,38 @@ class WillingnessTrainer:
         train_auc = roc_auc_score(y_train_true, y_train_proba)
 
         # ── Evaluate on HELD-OUT TEST fold (the real metrics) ─────────
-        y_test_proba = model.predict(dtest)
-        y_test_pred = (y_test_proba > 0.5).astype(int)
+        y_test_proba_raw = model.predict(dtest)
         y_test_true = dtest.get_label()
 
-        test_auc = roc_auc_score(y_test_true, y_test_proba)
+        # ── Probability calibration ────────────────────────────────────
+        # OOF predictions come from the training fold only; the test fold
+        # is never touched until the before/after evaluation below.
+        logger.info(f"Calibrating probabilities via {calibration.N_CALIBRATION_FOLDS}-fold out-of-fold isotonic regression...")
+        oof_predictions = calibration.compute_oof_predictions(
+            params=best_params, X_train=X_train, y_train=y_train, feature_names=feature_cols,
+        )
+        self.calibrator = calibration.fit_isotonic_calibrator(oof_predictions, y_train)
+
+        y_test_proba_calibrated = self.calibrator.predict(y_test_proba_raw)
+        calib_metrics = calibration.evaluate_calibration(y_test_true, y_test_proba_raw, y_test_proba_calibrated)
+        mlflow.log_metrics({f"calibration_{k}": v for k, v in calib_metrics.items()})
+        logger.info(
+            f"Calibration quality (held-out test fold) — "
+            f"Brier: {calib_metrics['brier_raw']:.4f} -> {calib_metrics['brier_calibrated']:.4f}, "
+            f"ECE: {calib_metrics['ece_raw']:.4f} -> {calib_metrics['ece_calibrated']:.4f} "
+            f"(lower is better for both)"
+        )
+        if calib_metrics["brier_calibrated"] > calib_metrics["brier_raw"]:
+            logger.warning(
+                "⚠ Calibration made the held-out Brier score worse — likely too few samples "
+                "for a stable isotonic fit. Predictions are still calibrated (monotonic-safe), "
+                "but review calibration_brier_* in MLflow before trusting this model version."
+            )
+
+        # Downstream metrics (precision/recall/F1) use the CALIBRATED
+        # probabilities — they are what scorer.py will actually emit.
+        y_test_pred = (y_test_proba_calibrated > 0.5).astype(int)
+        test_auc = roc_auc_score(y_test_true, y_test_proba_calibrated)
         test_precision = precision_score(y_test_true, y_test_pred, zero_division=0)
         test_recall = recall_score(y_test_true, y_test_pred, zero_division=0)
         test_f1 = f1_score(y_test_true, y_test_pred, zero_division=0)
@@ -327,7 +365,7 @@ class WillingnessTrainer:
             f"Training metrics (overfit check) — Train AUC: {train_auc:.4f}"
         )
         logger.info(
-            f"Held-out test metrics — "
+            f"Held-out test metrics (calibrated) — "
             f"AUC: {test_auc:.4f}, "
             f"Precision: {test_precision:.4f}, "
             f"Recall: {test_recall:.4f}, "
@@ -355,8 +393,8 @@ class WillingnessTrainer:
 
     # ── Model Persistence ────────────────────────────────────────────
 
-    def save_model(self, model: xgb.Booster) -> None:
-        """Save the trained model locally with versioning."""
+    def save_model(self, model: xgb.Booster, calibrator: IsotonicRegression | None = None) -> None:
+        """Save the trained model (and its calibrator, if any) locally with versioning."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_filename = f"willingness_v{timestamp}.json"
         model_path = self.model_dir / model_filename
@@ -364,9 +402,19 @@ class WillingnessTrainer:
         model.save_model(str(model_path))
         logger.info(f"Model saved to: {model_path}")
 
-        pointer_file = self.model_dir / "latest_willingness.json"
         pointer_data = {"latest": model_filename}
 
+        if calibrator is not None:
+            calibrator_filename = f"willingness_calibrator_v{timestamp}.pkl"
+            calibrator_path = self.model_dir / calibrator_filename
+            calibration.save_calibrator(calibrator, calibrator_path)
+            pointer_data["calibrator"] = calibrator_filename
+            logger.info(f"Calibrator saved to: {calibrator_path}")
+            mlflow.log_artifact(str(calibrator_path))
+        else:
+            logger.warning("No calibrator was fitted — scorer.py will fall back to raw (uncalibrated) probabilities.")
+
+        pointer_file = self.model_dir / "latest_willingness.json"
         with open(pointer_file, "w") as f:
             json.dump(pointer_data, f, indent=2)
 

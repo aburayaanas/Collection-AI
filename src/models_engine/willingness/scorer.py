@@ -8,13 +8,15 @@ including model loading, prediction generation, and Parquet caching for downstre
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import os
 import polars as pl
 import xgboost as xgb
+from sklearn.isotonic import IsotonicRegression
 
 from src.core.logger import get_logger
+from src.models_engine import calibration
 
 logger = get_logger(__name__)
 
@@ -45,22 +47,29 @@ class WillingnessScorer:
         self.cache_dir.mkdir(exist_ok=True, parents=True)
         logger.info(f"Cache directory ready: {self.cache_dir}")
         
-        # Load model using pointer file
-        self.model = self._load_latest_model()
+        # Load model (and its calibrator, if any) using the pointer file
+        self.model, self.calibrator = self._load_latest_model()
         logger.info("WillingnessScorer initialized successfully")
-    
-    def _load_latest_model(self) -> xgb.Booster:
+
+    def _load_latest_model(self) -> tuple[xgb.Booster, Optional[IsotonicRegression]]:
         """
-        Load the latest trained model using the pointer file.
-        
+        Load the latest trained model (and its probability calibrator, if
+        the pointer file references one — see
+        docs/backend_issues.md Issue 3 / src/models_engine/calibration.py)
+        using the pointer file.
+
         Returns:
-            Loaded XGBoost Booster model
-            
+            (Booster, calibrator or None). A missing calibrator is not an
+            error — it happens for models trained before this fix existed
+            — but every prediction will then be the raw, uncalibrated
+            XGBoost probability, and a warning is logged so this is
+            visible rather than silently downgrading fidelity.
+
         Raises:
             FileNotFoundError: If pointer file or model file not found
         """
         pointer_file = self.model_dir / "latest_willingness.json"
-        
+
         if not pointer_file.exists():
             raise FileNotFoundError(
                 f"No trained Willingness model found at: {pointer_file}\n"
@@ -70,29 +79,49 @@ class WillingnessScorer:
                 f"with MODE=TRAIN/FULL in .env) to create this pointer file, then "
                 f"Mode=SCORE jobs will work."
             )
-        
+
         # Read pointer file to get latest model filename
         with open(pointer_file, "r") as f:
             pointer_data = json.load(f)
-        
+
         model_filename = pointer_data.get("latest")
         if not model_filename:
             raise ValueError(f"Invalid pointer file: missing 'latest' key in {pointer_file}")
-        
+
         model_path = self.model_dir / model_filename
-        
+
         if not model_path.exists():
             raise FileNotFoundError(
                 f"Model file not found: {model_path}\n"
                 f"Pointer file references: {model_filename}"
             )
-        
+
         # Load XGBoost model
         model = xgb.Booster()
         model.load_model(str(model_path))
-        
+
         logger.info(f"Loaded model: {model_filename}")
-        return model
+
+        calibrator: Optional[IsotonicRegression] = None
+        calibrator_filename = pointer_data.get("calibrator")
+        if calibrator_filename:
+            calibrator_path = self.model_dir / calibrator_filename
+            if calibrator_path.exists():
+                calibrator = calibration.load_calibrator(calibrator_path)
+                logger.info(f"Loaded calibrator: {calibrator_filename}")
+            else:
+                logger.warning(
+                    f"Pointer file references calibrator '{calibrator_filename}' but it's "
+                    f"missing on disk — falling back to raw (uncalibrated) probabilities."
+                )
+        else:
+            logger.warning(
+                "No calibrator referenced by the pointer file (model trained before "
+                "docs/backend_issues.md Issue 3 was fixed) — scores will be raw, "
+                "uncalibrated XGBoost probabilities until this model is retrained."
+            )
+
+        return model, calibrator
     
     def score(self, df: pl.DataFrame, required_cols: List[str] = None) -> str:
         """
@@ -144,7 +173,18 @@ class WillingnessScorer:
         # Generate predictions
         logger.info("Generating predictions...")
         predictions = self.model.predict(dmatrix)
-        
+
+        # Calibrate (docs/backend_issues.md Issue 3): raw XGBoost
+        # probabilities saturate at ~0/~1; this maps them back to
+        # realistic confidence levels. See src/models_engine/calibration.py.
+        if self.calibrator is not None:
+            raw_min, raw_max = predictions.min(), predictions.max()
+            predictions = self.calibrator.predict(predictions)
+            logger.info(
+                f"Calibration applied. Raw range was [{raw_min:.4f}, {raw_max:.4f}] -> "
+                f"calibrated range [{predictions.min():.4f}, {predictions.max():.4f}]"
+            )
+
         # Create result DataFrame with only ID and score
         result_df = pl.DataFrame({
             id_col: df.select(id_col).to_series(),

@@ -50,7 +50,10 @@ def generate_dummy_data(num_records: int = NUM_RECORDS):
     generated_ids = set()
 
     # Use only the DATE part (no time) to match DB expectations
-    snapshot_date = datetime.now().date()
+    if settings.SNAP_DATE_OVERRIDE:
+        snapshot_date = datetime.strptime(settings.SNAP_DATE_OVERRIDE, "%Y-%m-%d").date()
+    else:
+        snapshot_date = datetime.now().date()
 
     while len(willingness_data) < num_records:
         cust_info_id = str(random.randint(10_000_000, 99_999_999))
@@ -139,24 +142,34 @@ def generate_dummy_data(num_records: int = NUM_RECORDS):
         primary_phone = f"+962 79 {random.randint(100, 999)} {random.randint(1000, 9999)}"
 
         # ── Block 2: Matrix & Quadrant Classification ─────────────────
-        score_delta_90d = random.randint(-50, 20)
-        composite_risk_score = random.randint(0, 100)
-        
         import json
         
-        # Correlate DPD somewhat to the quadrant/target
-        if target_w == 0 and target_a == 0:  # Q4-ish
+        # Correlate DPD and risk score to the quadrant/target
+        if target_w == 0 and target_a == 0:  # Q4-ish (Severe Distress / High Risk)
             days_past_due = random.randint(60, 180)
             p_label, c_label = "Q4", "Q3"
-        elif target_w == 1 and target_a == 0: # Q2
+            composite_risk_score = random.randint(78, 98)
+        elif target_w == 1 and target_a == 0: # Q2 (Vulnerable: High Willingness, Low Ability)
             days_past_due = random.randint(30, 90)
             p_label, c_label = "Q2", "Q4"
-        elif target_w == 0 and target_a == 1: # Q3
+            composite_risk_score = random.randint(40, 65)
+        elif target_w == 0 and target_a == 1: # Q3 (Strategic Defaulter: Low Willingness, High Ability)
             days_past_due = random.randint(30, 120)
             p_label, c_label = "Q3", "Q4"
-        else: # Q1
+            composite_risk_score = random.randint(55, 75)
+        else: # Q1 (Low Risk / Cooperative)
             days_past_due = random.randint(1, 30)
             p_label, c_label = "Q1", "Q2"
+            composite_risk_score = random.randint(10, 30)
+
+        # 90D Velocity (delta): Ensure Previous Score = (composite_risk_score - delta) is strictly within [0, 100]
+        min_possible_delta = composite_risk_score - 100  # ensures score - delta <= 100
+        max_possible_delta = composite_risk_score        # ensures score - delta >= 0
+        allowed_min = max(-35, min_possible_delta)
+        allowed_max = min(30, max_possible_delta)
+        if allowed_min > allowed_max:
+            allowed_min, allowed_max = allowed_max, allowed_min
+        score_delta_90d = random.randint(allowed_min, allowed_max)
             
         classification_probs = json.dumps({
             "primary": {"label": p_label, "conf": round(random.uniform(0.60, 0.95), 2)},
@@ -164,9 +177,19 @@ def generate_dummy_data(num_records: int = NUM_RECORDS):
             "residual": {"label": "Q_OTHER", "conf": round(random.uniform(0.01, 0.09), 2)}
         })
         
-        # ── Block 3: Behavioral Signal Data ───────────────────────────
-        payment_rejection_freq = random.randint(0, 5)
-        contact_avoidance_index = round(random.uniform(0.0, 1.0), 2)
+        # ── Block 3: Behavioral Signal Data (Correlated with Quadrant) ─
+        if target_w == 1 and target_a == 1:  # Q1: Cooperative, low risk
+            payment_rejection_freq = 0
+            contact_avoidance_index = round(random.uniform(0.0, 0.15), 2)
+        elif target_w == 1 and target_a == 0:  # Q2: Distressed but cooperative
+            payment_rejection_freq = random.randint(1, 3)
+            contact_avoidance_index = round(random.uniform(0.05, 0.30), 2)
+        elif target_w == 0 and target_a == 1:  # Q3: Strategic defaulter (evades contact)
+            payment_rejection_freq = random.randint(0, 1)
+            contact_avoidance_index = round(random.uniform(0.65, 0.95), 2)
+        else:  # Q4: Chronic high risk default
+            payment_rejection_freq = random.randint(2, 5)
+            contact_avoidance_index = round(random.uniform(0.70, 0.99), 2)
 
         # ── Block 5: Financial Exposure Data ──────────────────────────
         total_exposure_jod = round(random.uniform(1000.0, 50000.0), 2)
